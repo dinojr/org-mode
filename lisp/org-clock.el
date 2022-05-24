@@ -1196,7 +1196,7 @@ If `only-dangling-p' is non-nil, only ask to resolve dangling
 
 (defvar org-x11idle-exists-p
   ;; Check that x11idle exists
-  (and (eq window-system 'x)
+  (and (or (eq window-system 'pgtk) (eq window-system 'x))
        (eq 0 (call-process-shell-command
               (format "command -v %s" org-clock-x11idle-program-name)))
        ;; Check that x11idle can retrieve the idle time
@@ -1213,7 +1213,7 @@ This routine returns a floating point number."
   (cond
    ((eq system-type 'darwin)
     (org-mac-idle-seconds))
-   ((and (eq window-system 'x) org-x11idle-exists-p)
+   ((and (or (eq window-system 'x) (eq window-system 'pgtk)) org-x11idle-exists-p)
     (org-x11-idle-seconds))
    (t
     (org-emacs-idle-seconds))))
