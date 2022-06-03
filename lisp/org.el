@@ -256,6 +256,12 @@ byte-compiled before it is loaded."
 	     tangled-file
 	     (file-attribute-modification-time
 	      (file-attributes (file-truename file))))
+      ;; Make sure that tangled file modification time is
+      ;; updated even when `org-babel-tangle-file' does not make changes.
+      ;; This avoids re-tangling changed FILE where the changes did
+      ;; not affect the tangled code.
+      (when (file-exists-p tangled-file)
+        (set-file-times tangled-file))
       (org-babel-tangle-file file
                              tangled-file
                              (rx string-start
@@ -8817,7 +8823,7 @@ nil or a string to be used for the todo mark." )
   "Like `org-todo' but the time of change will be 23:59 of yesterday."
   (interactive "P")
   (if (eq major-mode 'org-agenda-mode)
-      (apply 'org-agenda-todo-yesterday arg)
+      (org-agenda-todo-yesterday arg)
     (let* ((org-use-effective-time t)
 	   (hour (nth 2 (decode-time (org-current-time))))
 	   (org-extend-today-until (1+ hour)))
