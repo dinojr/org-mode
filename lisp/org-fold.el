@@ -4,7 +4,7 @@
 ;;
 ;; Author: Ihor Radchenko <yantar92 at gmail dot com>
 ;; Keywords: folding, invisible text
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -55,6 +55,7 @@
 (defvar org-outline-regexp-bol)
 (defvar org-archive-tag)
 (defvar org-custom-properties-overlays)
+(defvar org-element-headline-re)
 
 (declare-function isearch-filter-visible "isearch" (beg end))
 (declare-function org-element-type "org-element" (element))
@@ -837,11 +838,13 @@ DETAIL is either nil, `minimal', `local', `ancestors',
           (let (org-hide-emphasis-markers
                 org-link-descriptive
                 org-pretty-entities
-                org-hide-macro-markers
+                (org-hide-macro-markers nil)
                 (region (or (org-find-text-property-region (point) 'org-emphasis)
                             (org-find-text-property-region (point) 'org-macro)
                             (org-find-text-property-region (point) 'invisible)
                             region)))
+            ;; Silence byte-compiler.
+            (ignore org-hide-macro-markers)
             (when region
               (org-with-point-at (car region)
                 (beginning-of-line)
@@ -928,6 +931,30 @@ This function is intended to be used as a member of
   (setq from (save-excursion (goto-char from) (line-beginning-position 0)))
   (cons from to))
 
+(defun org-fold--reveal-headline-at-point ()
+  "Reveal header line and empty contents inside.
+Reveal the header line and, if present, also reveal its contents, when
+the contents consists of blank lines.
+
+Assume that point is located at the header line."
+  (org-with-wide-buffer
+   (beginning-of-line)
+   (org-fold-region
+    (max (point-min) (1- (point)))
+    (let ((endl (line-end-position)))
+      (save-excursion
+        (goto-char endl)
+        (skip-chars-forward "\n\t\r ")
+        ;; Unfold blank lines after newly inserted headline.
+        (if (equal (point)
+                   (save-excursion
+                     (goto-char endl)
+                     (org-end-of-subtree)
+                     (skip-chars-forward "\n\t\r ")))
+            (point)
+          endl)))
+    nil 'headline)))
+
 (defun org-fold--reveal-outline-maybe (region _)
   "Reveal folded outline in REGION when needed.
 
@@ -940,28 +967,25 @@ This function is intended to be used as :fragile property of
      ;; headline or a list item.
      (backward-char)
      (beginning-of-line)
-     ;; Make sure that headline is not partially hidden
+     ;; Make sure that headline is not partially hidden.
      (unless (org-fold-folded-p nil 'headline)
-       (org-fold-region
-        (max (point-min) (1- (point)))
-        (let ((endl (line-end-position)))
-          (save-excursion
-            (goto-char endl)
-            (skip-chars-forward "\n\t\r ")
-            ;; Unfold blank lines.
-            (if (or (and (looking-at-p "\\*")
-                         (> (point) (1+ endl)))
-                    (eq (point) (point-max)))
-                (point)
-              endl)))
-        nil 'headline))
+       (org-fold--reveal-headline-at-point))
      ;; Never hide level 1 headlines
      (save-excursion
        (goto-char (line-end-position))
        (unless (>= (point) (cdr region))
          (when (re-search-forward (rx bol "* ") (cdr region) t)
-           (org-fold-region (match-beginning 0) (line-end-position) nil 'headline))))
+           (org-fold--reveal-headline-at-point))))
+     ;; Make sure that headline after is not partially hidden.
+     (goto-char (cdr region))
+     (beginning-of-line)
+     (unless (org-fold-folded-p nil 'headline)
+       (when (looking-at-p org-element-headline-re)
+         (org-fold--reveal-headline-at-point)))
      ;; Check the validity of headline
+     (goto-char (car region))
+     (backward-char)
+     (beginning-of-line)
      (unless (let ((case-fold-search t))
 	       (looking-at (rx-to-string
                             `(or (regex ,(org-item-re))

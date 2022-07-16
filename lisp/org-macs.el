@@ -4,7 +4,7 @@
 
 ;; Author: Carsten Dominik <carsten.dominik@gmail.com>
 ;; Keywords: outlines, hypermedia, calendar, wp
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -69,18 +69,6 @@
 		 (inhibit-modification-hooks t))
 	     ,@body)
 	 (set-buffer-modified-p ,was-modified)))))
-
-(defmacro org-without-partial-completion (&rest body)
-  (declare (debug (body)))
-  `(if (and (boundp 'partial-completion-mode)
-	    partial-completion-mode
-	    (fboundp 'partial-completion-mode))
-       (unwind-protect
-	   (progn
-	     (partial-completion-mode -1)
-	     ,@body)
-	 (partial-completion-mode 1))
-     ,@body))
 
 (defmacro org-with-point-at (pom &rest body)
   "Move to buffer and point of point-or-marker POM for the duration of BODY."
@@ -166,13 +154,19 @@
 	     (and (re-search-backward "^[ \t]*# +Local Variables:"
 				      (max (- (point) 3000) 1)
 				      t)
-		  (delete-and-extract-region (point) (point-max)))))))
+               (let ((buffer-undo-list t))
+	         (delete-and-extract-region (point) (point-max)))))))
+         (tick-counter-before (buffer-modified-tick)))
      (unwind-protect (progn ,@body)
        (when local-variables
 	 (org-with-wide-buffer
 	  (goto-char (point-max))
 	  (unless (bolp) (insert "\n"))
-	  (insert local-variables))))))
+          (let ((modified (< tick-counter-before (buffer-modified-tick)))
+                (buffer-undo-list t))
+	    (insert local-variables)
+            (unless modified
+              (restore-buffer-modified-p nil))))))))
 
 (defmacro org-no-popups (&rest body)
   "Suppress popup windows and evaluate BODY."
@@ -214,14 +208,12 @@ WINDOW defaults to the selected window.  MAX-HEIGHT and MIN-HEIGHT are
 passed through to `fit-window-to-buffer'.  If SHRINK-ONLY is set, call
 `shrink-window-if-larger-than-buffer' instead, the height limit is
 ignored in this case."
-  (cond ((if (fboundp 'window-full-width-p)
-             (not (window-full-width-p window))
-           ;; Do nothing if another window would suffer.
-           (> (frame-width) (window-width window))))
-        ((and (fboundp 'fit-window-to-buffer) (not shrink-only))
+  (cond ((not (window-full-width-p window))
+         ;; Do nothing if another window would suffer.
+         )
+        ((not shrink-only)
          (fit-window-to-buffer window max-height min-height))
-        ((fboundp 'shrink-window-if-larger-than-buffer)
-         (shrink-window-if-larger-than-buffer window)))
+        (t (shrink-window-if-larger-than-buffer window)))
   (or window (selected-window)))
 
 (defun org-buffer-list (&optional predicate exclude-tmp)
@@ -587,7 +579,18 @@ ones and overrule settings in the other lists."
 
 (defconst org-unique-local-variables
   '(org-element--cache
-    org-element--cache-objects
+    org-element--headline-cache
+    org-element--cache-change-tic
+    org-element--cache-last-buffer-size
+    org-element--cache-change-warning
+    org-element--cache-gapless
+    org-element--cache-hash-left
+    org-element--cache-hash-right
+    org-element--cache-size
+    org-element--headline-cache-size
+    org-element--cache-sync-keys-value
+    org-element--cache-diagnostics-ring
+    org-element--cache-diagnostics-ring-size
     org-element--cache-sync-keys
     org-element--cache-sync-requests
     org-element--cache-sync-timer)

@@ -4,7 +4,7 @@
 
 ;; Author: Carsten Dominik <carsten.dominik@gmail.com>
 ;; Keywords: outlines, hypermedia, calendar, wp
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -338,7 +338,7 @@ determines if it is a foreground or a background color."
 
 (defvar org-tags-special-faces-re nil)
 (defun org-set-tag-faces (var value)
-  (set var value)
+  (set-default-toplevel-value var value)
   (if (not value)
       (setq org-tags-special-faces-re nil)
     (setq org-tags-special-faces-re

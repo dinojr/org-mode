@@ -4,7 +4,7 @@
 
 ;; Author: Martyn Jago
 ;; Keywords: babel language, literate programming
-;; Homepage: https://orgmode.org/worg/org-contrib/babel/languages/ob-doc-lilypond.html
+;; URL: https://orgmode.org/worg/org-contrib/babel/languages/ob-doc-lilypond.html
 
 ;; This file is part of GNU Emacs.
 
@@ -107,7 +107,7 @@ you can leave the string empty on this case."
   :package-version '(Org . "8.2.7")
   :set
   (lambda (symbol value)
-    (set symbol value)
+    (set-default-toplevel-value symbol value)
     (setq
      org-babel-lilypond-ly-command   (nth 0 value)
      org-babel-lilypond-pdf-command  (nth 1 value)

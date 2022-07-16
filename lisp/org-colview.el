@@ -4,7 +4,7 @@
 
 ;; Author: Carsten Dominik <carsten.dominik@gmail.com>
 ;; Keywords: outlines, hypermedia, calendar, wp
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -513,8 +513,7 @@ for the duration of the command.")
 (defun org-columns-remove-overlays ()
   "Remove all currently active column overlays."
   (interactive)
-  (when (and (fboundp 'face-remap-remove-relative)
-	     org-columns-header-line-remap)
+  (when org-columns-header-line-remap
     (face-remap-remove-relative org-columns-header-line-remap)
     (setq org-columns-header-line-remap nil))
   (when org-columns-overlays

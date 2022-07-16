@@ -4,7 +4,7 @@
 
 ;; Author: Eric Schulte
 ;; Keywords: literate programming, reproducible research
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 
 ;; This file is part of GNU Emacs.
 
@@ -68,7 +68,7 @@ outside the Customize interface."
   :group 'org-babel
   :type '(repeat (string :tag "Shell name: "))
   :set (lambda (symbol value)
-	 (set-default symbol value)
+	 (set-default-toplevel-value symbol value)
 	 (org-babel-shell-initialize)))
 
 (defcustom org-babel-shell-results-defaults-to-output t

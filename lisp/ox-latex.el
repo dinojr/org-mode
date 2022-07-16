@@ -39,6 +39,12 @@
 
 (declare-function engrave-faces-latex-gen-preamble "ext:engrave-faces-latex")
 (declare-function engrave-faces-latex-buffer "ext:engrave-faces-latex")
+(declare-function engrave-faces-latex-gen-preamble-line "ext:engrave-faces-latex")
+(declare-function engrave-faces-get-theme "ext:engrave-faces")
+
+(defvar engrave-faces-latex-output-style)
+(defvar engrave-faces-current-preset-style)
+(defvar engrave-faces-latex-mathescape)
 
 
 ;;; Define Back-End
@@ -991,7 +997,7 @@ The most comprehensive option can be set with,
 which causes source code to be run through
 `engrave-faces-latex-buffer', which generates colorings using
 Emacs' font-lock information.  This requires the Emacs package
-engrave-faces (availible from ELPA), and the LaTeX package
+engrave-faces (available from ELPA), and the LaTeX package
 fvextra be installed.
 
 The styling of the engraved result can customised with
@@ -1216,7 +1222,7 @@ as long as it:
 In the default value the colors \"EFD\" and \"EfD\" are provided
 as they are respectively the foreground and background colours,
 just in case they aren't provided by the generated preamble, so
-we can asume they are always set.
+we can assume they are always set.
 
 Within this preamble there are two recognised macro-like placeholders:
 
@@ -1364,7 +1370,7 @@ which are given by `org-latex-engraved-preamble' and
                    (t (funcall gen-theme-spec engraved-theme))))
                (funcall gen-theme-spec engraved-theme))
            (message "Cannot engrave source blocks. Consider installing `engrave-faces'.")
-           "% WARNING syntax highlighting unavailible as engrave-faces-latex was missing.\n")
+           "% WARNING syntax highlighting unavailable as engrave-faces-latex was missing.\n")
          "\n")
       (concat
        "\n% Setup for code blocks\n\n"
@@ -1744,7 +1750,7 @@ This is used to choose a separator for constructs like \\verb."
 	     when (not (string-match (regexp-quote (char-to-string c)) s))
 	     return (char-to-string c))))
 
-(defun org-latex--make-option-string (options &optional seperator)
+(defun org-latex--make-option-string (options &optional separator)
   "Return a comma separated string of keywords and values.
 OPTIONS is an alist where the key is the options keyword as
 a string, and the value a list containing the keyword value, or
@@ -1761,7 +1767,7 @@ nil."
                                        (format "{%s}" value)
                                      value))))))
              options
-             (or seperator ",")))
+             (or separator ",")))
 
 (defun org-latex--wrap-label (element output info)
   "Wrap label associated to ELEMENT around OUTPUT, if appropriate.
@@ -3280,7 +3286,8 @@ contextual information."
        :num-start num-start
        :retain-labels retain-labels
        :attributes attributes
-       :float float))))
+       :float float
+       :custom-env custom-env))))
 
 (cl-defun org-latex-src-block--verbatim
     (&key src-block info caption caption-above-p float &allow-other-keys)
@@ -3468,7 +3475,7 @@ to the Verbatim environment or Verb command."
                     engraved-wrapped
                     "}")
           engraved-wrapped))
-    (user-error "Cannot engrave code as `engrave-faces-latex' is unavailible.")))
+    (user-error "Cannot engrave code as `engrave-faces-latex' is unavailable.")))
 
 (cl-defun org-latex-src-block--engraved
     (&key src-block info lang caption caption-above-p num-start retain-labels attributes float &allow-other-keys)
@@ -3634,7 +3641,8 @@ CONTENTS is the contents of the object."
 ;; `org-latex-table' is the entry point for table transcoding.  It
 ;; takes care of tables with a "verbatim" mode.  Otherwise, it
 ;; delegates the job to either `org-latex--table.el-table',
-;; `org-latex--org-table' or `org-latex--math-table' functions,
+;; `org-latex--org-table', `org-latex--math-table' or
+;; `org-latex--org-tabbing' functions,
 ;; depending of the type of the table and the mode requested.
 ;;
 ;; `org-latex--align-string' is a subroutine used to build alignment
@@ -3658,8 +3666,11 @@ contextual information."
 			   `(table nil ,@(org-element-contents table))))))
        ;; Case 2: Matrix.
        ((or (string= type "math") (string= type "inline-math"))
-	(org-latex--math-table table info))
-       ;; Case 3: Standard table.
+        (org-latex--math-table table info))
+       ;; Case 3: Tabbing
+       ((string= type "tabbing")
+        (org-table--org-tabbing table contents info))
+       ;; Case 4: Standard table.
        (t (concat (org-latex--org-table table contents info)
 		  ;; When there are footnote references within the
 		  ;; table, insert their definition just after it.
@@ -3695,6 +3706,30 @@ centered."
 	      (when (memq 'right borders) (push "|" align))))
 	  info)
 	(apply 'concat (nreverse align)))))
+
+(defun org-latex--align-string-tabbing (table info)
+  "Return LaTeX alignment string using tabbing environment.
+TABLE is the considered table.  INFO is a plist used as
+a communication channel."
+  (or (org-export-read-attribute :attr_latex table :align)
+      (let* ((count
+              ;; Count the number of cells in the first row.
+              (length
+               (org-element-map
+                   (org-element-map table 'table-row
+                     (lambda (row)
+                       (and (eq (org-element-property :type row)
+                                'standard)
+                            row))
+                     info 'first-match)
+                   'table-cell #'identity)))
+             ;; Calculate the column width, using a proportion of
+             ;; the document's textwidth.
+             (separator
+              (format "\\hspace{%s\\textwidth} \\= "
+                      (- (/  1.0 count) 0.01))))
+        (concat (apply 'concat (make-list count separator))
+                "\\kill"))))
 
 (defun org-latex--decorate-table (table attributes caption above? info)
   "Decorate TABLE string with caption and float environment.
@@ -3798,6 +3833,21 @@ This function assumes TABLE has `org' as its `:type' property and
 			    table-env)))
 	(org-latex--decorate-table output attr caption above? info))))))
 
+
+(defun org-table--org-tabbing (table contents info)
+  "Return tabbing environment LaTeX code for Org table.
+TABLE is the table type element to transcode.  CONTENTS is its
+contents, as a string.  INFO is a plist used as a communication
+channel.
+
+This function assumes TABLE has `org' as its `:type' property and
+`tabbing' as its `:mode' attribute."
+  (format "\\begin{%s}\n%s\n%s\\end{%s}"
+          "tabbing"
+          (org-latex--align-string-tabbing table info)
+          contents
+          "tabbing"))
+
 (defun org-latex--table.el-table (table info)
   "Return appropriate LaTeX code for a table.el table.
 
@@ -3881,8 +3931,10 @@ This function assumes TABLE has `org' as its `:type' property and
   "Transcode a TABLE-CELL element from Org to LaTeX.
 CONTENTS is the cell contents.  INFO is a plist used as
 a communication channel."
-  (concat
-   (let ((scientific-format (plist-get info :latex-table-scientific-notation)))
+  (let ((type (org-export-read-attribute
+               :attr_latex (org-export-get-parent-table table-cell) :mode))
+        (scientific-format (plist-get info :latex-table-scientific-notation)))
+    (concat
      (if (and contents
 	      scientific-format
 	      (string-match orgtbl-exp-regexp contents))
@@ -3891,8 +3943,9 @@ a communication channel."
 	 (format scientific-format
 		 (match-string 1 contents)
 		 (match-string 2 contents))
-       contents))
-   (when (org-export-get-next-element table-cell info) " & ")))
+       contents)
+     (when (org-export-get-next-element table-cell info)
+       (if (string= type "tabbing") " \\> " " & ")))))
 
 
 ;;;; Table Row

@@ -4,7 +4,7 @@
 ;;
 ;; Author: Ihor Radchenko <yantar92 at gmail dot com>
 ;; Keywords: folding, invisible text
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -162,7 +162,7 @@
 ;; functions, it is important to keep in mind that 'invisible text
 ;; property may have multiple possible values (not just nil and
 ;; t). Hence, (next-single-char-property-change pos 'invisible) is not
-;; guarantied to return the boundary of invisible/visible text.
+;; guaranteed to return the boundary of invisible/visible text.
 
 ;;; Interactive searching inside folded text (via isearch)
 
@@ -298,12 +298,13 @@
   "Internal implementation detail used to hide folded text.
 Can be either `text-properties' or `overlays'.
 The former is faster on large files, while the latter is generally
-less error-prone."
+less error-prone with regard to third-party packages that haven't yet
+adapted to the new folding implementation."
   :group 'org
   :package-version '(Org . "9.6")
   :type '(choice
-          (const :tag "Overlays" 'overlays)
-          (const :tag "Text properties" 'text-properties)))
+          (const :tag "Overlays" overlays)
+          (const :tag "Text properties" text-properties)))
 
 (defvar-local org-fold-core-isearch-open-function #'org-fold-core--isearch-reveal
   "Function used to reveal hidden text found by isearch.
@@ -348,7 +349,7 @@ following symbols:
   used.
 
 - `merge-folds': Do not distinguish between different types of folding
-  specs.  This is the most aggressive optimisation with unforseen and
+  specs.  This is the most aggressive optimisation with unforeseen and
   potentially drastic effects.")
 (put 'org-fold-core--optimise-for-huge-buffers 'safe-local-variable 'listp)
 
@@ -381,7 +382,7 @@ The following properties are known:
                       using isearch.
 - :isearch-open     :: non-nil means that isearch can reveal text hidden
                       using this spec.  This property does nothing
-                      when 'isearch-ignore property is non-nil.
+                      when \\='isearch-ignore property is non-nil.
 - :front-sticky     :: non-nil means that text prepended to the folded text
                       is automatically folded.
 - :rear-sticky      :: non-nil means that text appended to the folded text
@@ -708,7 +709,7 @@ The folding spec properties will be set to PROPERTIES (see
 SPEC must be a symbol.
 
 BUFFER can be a buffer to remove SPEC in, nil to remove SPEC in current
-buffer, or 'all to remove SPEC in all open `org-mode' buffers and all
+buffer, or \\='all to remove SPEC in all open `org-mode' buffers and all
 future org buffers."
   (org-fold-core--check-spec spec)
   (when (eq buffer 'all)
@@ -777,7 +778,7 @@ If SPEC-OR-ALIAS is a folding spec, only check the given folding spec."
 Return nil if there is no folding at point or POM.
 If SPEC-OR-ALIAS is nil, return a folding spec with highest priority
 among present at `point' or POM.
-If SPEC-OR-ALIAS is 'all, return the list of all present folding
+If SPEC-OR-ALIAS is \\='all, return the list of all present folding
 specs.
 If SPEC-OR-ALIAS is a valid folding spec or a spec alias, return the
 corresponding folding spec (if the text is folded using that spec)."
@@ -1005,7 +1006,7 @@ If SPEC-OR-ALIAS is omitted and FLAG is nil, unfold everything in the region."
 This is used to allow searching in regions hidden via text properties.
 As for [2020-05-09 Sat], Isearch only has special handling of hidden overlays.
 Any text hidden via text properties is not revealed even if `search-invisible'
-is set to 't.")
+is set to `t'.")
 
 (defvar-local org-fold-core--isearch-local-regions (make-hash-table :test 'equal)
   "Hash table storing temporarily shown folds from isearch matches.")
@@ -1031,7 +1032,7 @@ TYPE can be either `text-properties' or `overlays'."
     (org-fold-core-region (car region) (cdr region) nil)))
 
 (defun org-fold-core--isearch-filter-predicate-text-properties (beg end)
-  "Make sure that folded text is searchable when user whant so.
+  "Make sure that folded text is searchable when user want so.
 This function is intended to be used as `isearch-filter-predicate'."
   (and
    ;; Check folding specs that cannot be searched
@@ -1096,7 +1097,7 @@ This is a hack, but I do not see a better way around until isearch
 gets support of text properties.")
 (defun org-fold-core--create-isearch-overlays (beg end)
   "Replace text property invisibility spec by overlays between BEG and END.
-All the searcheable folded regions will be changed to use overlays
+All the searchable folded regions will be changed to use overlays
 instead of text properties.  The created overlays will be stored in
 `org-fold-core--isearch-overlays'."
   (let ((pos beg))
@@ -1268,61 +1269,44 @@ property, unfold the region if the :fragile function returns non-nil."
           (let ((new-region (funcall func from to)))
             (setq from (car new-region))
             (setq to (cdr new-region))))
-        (dolist (spec (org-fold-core-folding-spec-list))
-          ;; No action is needed when :fragile is nil for the spec.
-          (when (org-fold-core-get-folding-spec-property spec :fragile)
-            (org-with-wide-buffer
-             ;; Expand the considered region to include partially present fold.
-             ;; Note: It is important to do this inside loop over all
-             ;; specs.  Otherwise, the region may be expanded to huge
-             ;; outline fold, potentially involving majority of the
-             ;; buffer.  That would cause the below code to loop over
-             ;; almost all the folds in buffer, which would be too slow.
-             (let ((local-from from)
-                   (local-to to)
-                   (region-from (org-fold-core-get-region-at-point spec (max (point-min) (1- from))))
-                   (region-to (org-fold-core-get-region-at-point spec (min to (1- (point-max))))))
-               (when region-from (setq local-from (car region-from)))
-               (when region-to (setq local-to (cdr region-to)))
-               (let ((pos local-from))
-                 ;; Move to the first hidden region.
-                 (unless (org-fold-core-get-folding-spec spec pos)
-                   (setq pos (org-fold-core-next-folding-state-change spec pos local-to)))
-                 ;; Cycle over all the folds.
-                 (while (< pos local-to)
-                   (save-match-data ; we should not clobber match-data in after-change-functions
-                     (let ((fold-begin (and (org-fold-core-get-folding-spec spec pos)
-                                            pos))
-                           (fold-end (org-fold-core-next-folding-state-change spec pos local-to)))
-                       (when (and fold-begin fold-end)
-                         (when (save-excursion
-                                 (funcall (org-fold-core-get-folding-spec-property spec :fragile)
-                                          (cons fold-begin fold-end)
-                                          spec))
-                           ;; Reveal completely, not just from the SPEC.
-                           (org-fold-core-region fold-begin fold-end nil)))))
-                   ;; Move to next fold.
-                   (setq pos (org-fold-core-next-folding-state-change spec pos local-to))))))))))))
+        (org-fold-core-cycle-over-indirect-buffers
+          (dolist (spec (org-fold-core-folding-spec-list))
+            ;; No action is needed when :fragile is nil for the spec.
+            (when (org-fold-core-get-folding-spec-property spec :fragile)
+              (org-with-wide-buffer
+               ;; Expand the considered region to include partially present fold.
+               ;; Note: It is important to do this inside loop over all
+               ;; specs.  Otherwise, the region may be expanded to huge
+               ;; outline fold, potentially involving majority of the
+               ;; buffer.  That would cause the below code to loop over
+               ;; almost all the folds in buffer, which would be too slow.
+               (let ((local-from from)
+                     (local-to to)
+                     (region-from (org-fold-core-get-region-at-point spec (max (point-min) (1- from))))
+                     (region-to (org-fold-core-get-region-at-point spec (min to (1- (point-max))))))
+                 (when region-from (setq local-from (car region-from)))
+                 (when region-to (setq local-to (cdr region-to)))
+                 (let ((pos local-from))
+                   ;; Move to the first hidden region.
+                   (unless (org-fold-core-get-folding-spec spec pos)
+                     (setq pos (org-fold-core-next-folding-state-change spec pos local-to)))
+                   ;; Cycle over all the folds.
+                   (while (< pos local-to)
+                     (save-match-data ; we should not clobber match-data in after-change-functions
+                       (let ((fold-begin (and (org-fold-core-get-folding-spec spec pos)
+                                              pos))
+                             (fold-end (org-fold-core-next-folding-state-change spec pos local-to)))
+                         (when (and fold-begin fold-end)
+                           (when (save-excursion
+                                   (funcall (org-fold-core-get-folding-spec-property spec :fragile)
+                                            (cons fold-begin fold-end)
+                                            spec))
+                             ;; Reveal completely, not just from the SPEC.
+                             (org-fold-core-region fold-begin fold-end nil)))))
+                     ;; Move to next fold.
+                     (setq pos (org-fold-core-next-folding-state-change spec pos local-to)))))))))))))
 
-;;; Hanlding killing/yanking of folded text
-
-;; Backward compatibility with Emacs 24.
-(defun org-fold-core--seq-partition (list n)
-  "Return list of elements of LIST grouped into sub-sequences of length N.
-The last list may contain less than N elements.  If N is a
-negative integer or 0, nil is returned."
-  (if (fboundp 'seq-partition)
-      (seq-partition list n)
-    (unless (< n 1)
-      (let ((result '()))
-        (while list
-          (let (part)
-            (dotimes (_ n)
-              (when list (push (car list) part)))
-            (push part result))
-          (dotimes (_ n)
-            (setq list (cdr list))))
-        (nreverse result)))))
+;;; Handling killing/yanking of folded text
 
 ;; By default, all the text properties of the killed text are
 ;; preserved, including the folding text properties.  This can be
@@ -1346,7 +1330,7 @@ negative integer or 0, nil is returned."
 ;; ---- end of indirect buffer ----
 ;; If we copy the text under "Headline" from the indirect buffer and
 ;; insert it under "Another headline" in the base buffer, the inserted
-;; text will be hidden since it's folding text properties are copyed.
+;; text will be hidden since it's folding text properties are copied.
 ;; Basically, the copied text would have two sets of folding text
 ;; properties: (1) Properties for base buffer telling that the text is
 ;; hidden; (2) Properties for the indirect buffer telling that the
@@ -1386,7 +1370,7 @@ The arguments and return value are as specified for `filter-buffer-substring'."
                  ;; Yes, it is a hack.
                  ;; The below gives us string representation as a list.
                  ;; Note that we need to remove unreadable values, like markers (#<...>).
-                 (org-fold-core--seq-partition
+                 (seq-partition
                   (cdr (let ((data (read (replace-regexp-in-string
                                           "^#(" "("
                                           (replace-regexp-in-string

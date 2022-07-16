@@ -216,7 +216,55 @@
 	    (let ((org-plain-list-ordered-item-terminator t)
 		  (org-list-allow-alphabetical t))
 	      (org-cycle-list-bullet)
-	      (buffer-substring (point) (line-end-position)))))))
+	      (buffer-substring (point) (line-end-position))))))
+  ;; Preserve point position while cycling.
+  (org-test-with-temp-text "- this is test
+
+  - asd
+    - asd
+ <point> - this is
+* headline
+"
+    (should (= (point) 36))
+    (dotimes (_ 10)
+      (org-cycle-list-bullet)
+      (should (= 1 (- (point) (line-beginning-position))))))
+  (org-test-with-temp-text "
+- this is test
+  + asd
+    - asd
+  <point>+ this is
+* headline
+"
+    (should (= (point) 37))
+    (dotimes (_ 10)
+      (org-cycle-list-bullet)
+      (should (= 2 (- (point) (line-beginning-position))))))
+  (org-test-with-temp-text "
+- this is test
+  + asd
+    - asd
+  +<point> this is
+* headline
+"
+    (should (= (point) 38))
+    (dotimes (_ 10)
+      (org-cycle-list-bullet)
+      (should (= 3 (- (point) (line-beginning-position))))))
+  (org-test-with-temp-text "
+- this is test
+  - asd
+    - asd
+  - <point>this is
+* headline
+"
+    (should (= (point) 39))
+    (dotimes (i 5)
+      (org-cycle-list-bullet)
+      (should
+       (if (or (< i 2) (= i 4))
+           (should (= 4 (- (point) (line-beginning-position))))
+         (should (= 5 (- (point) (line-beginning-position)))))))))
 
 (ert-deftest test-org-list/indent-item ()
   "Test `org-indent-item' specifications."
@@ -261,6 +309,16 @@
 	    (buffer-string))))
   (should
    (equal "
+- [ ] list item 1
+  + [ ] list item 2"
+          (org-test-with-temp-text "
+- [ ] list item 1
+- [ ] list item 2<point>"
+            (let ((org-list-demote-modify-bullet '(("-" . "+"))))
+              (org-indent-item)
+              (buffer-string)))))
+  (should
+   (equal "
 1. Item 1
    + Item 2"
 	  (org-test-with-temp-text "
@@ -298,7 +356,21 @@ b. Item 2<point>"
 	    (push-mark (point) t t)
 	    (goto-char (point-max))
 	    (let (org-list-demote-modify-bullet) (org-indent-item))
-	    (buffer-string)))))
+	    (buffer-string))))
+  ;; When point is right after empty item, do not move point.
+  (should
+   (= 13
+      (org-test-with-temp-text "
+- item
+- <point> ::"
+        (org-indent-item)
+        (point))))
+  ;; Preserve space after point upon promoting level.
+  (org-test-with-temp-text "
+- item
+- <point> 	::"
+    (org-indent-item)
+    (should (looking-at-p " \t"))))
 
 (ert-deftest test-org-list/indent-item-tree ()
   "Test `org-indent-item-tree' specifications."

@@ -4,7 +4,7 @@
 
 ;; Author: Jambunathan K <kjambunathan at gmail dot com>
 ;; Keywords: outlines, hypermedia, calendar, wp
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 
 ;; This file is part of GNU Emacs.
 
@@ -31,6 +31,10 @@
 (require 'org-macs)
 (require 'ox)
 (require 'table nil 'noerror)
+
+(declare-function org-at-heading-p "org" (&optional _))
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
+(declare-function org-next-visible-heading "org" (arg))
 
 ;;; Define Back-End
 
@@ -404,7 +408,7 @@ with GNU ELPA tar or standard Emacs distribution."
     "Set `org-odt-schema-dir'.
 Also add it to `rng-schema-locating-files'."
     (let ((schema-dir value))
-      (set var
+      (set-default-toplevel-value var
 	   (if (and
 		(file-expand-wildcards
 		 (expand-file-name "od-manifest-schema*.rnc" schema-dir))
@@ -3083,7 +3087,7 @@ and prefix with \"OrgSrc\".  For example,
 		 (with-temp-buffer
 		   (insert code)
 		   (funcall lang-mode)
-		   (org-font-lock-ensure)
+                   (font-lock-ensure)
 		   (buffer-string))))
 	 (fontifier (if use-htmlfontify-p 'org-odt-htmlfontify-string
 		      'org-odt--encode-plain-text))

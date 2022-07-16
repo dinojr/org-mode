@@ -596,10 +596,10 @@ for this property are =folded=, =children=, =content=, and =all=.
 :END:
 #+cindex: edits, catching invisible
 
-#+vindex: org-catch-invisible-edits
+#+vindex: org-fold-catch-invisible-edits
 Sometimes you may inadvertently edit an invisible part of the buffer
 and be confused on what has been edited and how to undo the mistake.
-Setting ~org-catch-invisible-edits~ to non-~nil~ helps preventing
+Setting ~org-fold-catch-invisible-edits~ to non-~nil~ helps preventing
 this.  See the docstring of this option on how Org should catch
 invisible edits and process them.
 
@@ -4488,7 +4488,7 @@ in the subtree (not just direct children), configure the variable
 include the word =recursive= into the value of the =COOKIE_DATA=
 property.
 
-#+begin_example org
+#+begin_example
 ,* Parent capturing statistics [2/20]
   :PROPERTIES:
   :COOKIE_DATA: todo recursive
@@ -8557,8 +8557,8 @@ commands:
   Search for a regular expression in all agenda files and additionally
   in the files listed in ~org-agenda-text-search-extra-files~.  This
   uses the Emacs command ~multi-occur~.  A prefix argument can be used
-  to specify the number of context lines for each match, default is
-  1.
+  to specify the number of context lines for each match, the default
+  is 1.
 
 - {{{kbd(#)}}} ::
 
@@ -11346,7 +11346,7 @@ footnote reference is simply the marker in square brackets, inside
 text.  Markers always start with =fn:=.  For example:
 
 #+begin_example
-The Org homepage[fn:1] now looks a lot better than it used to.
+The Org website[fn:1] now looks a lot better than it used to.
 ...
 [fn:1] The link is: https://orgmode.org
 #+end_example
@@ -12455,7 +12455,7 @@ should in principle be exportable as a Beamer presentation.
   When =ignoreheading= is set, Org export ignores the entry's headline
   but not its content.  This is useful for inserting content between
   frames.  It is also useful for properly closing a =column=
-  environment.  @end itemize
+  environment.
 
   #+cindex: @samp{BEAMER_ACT}, property
   #+cindex: @samp{BEAMER_OPT}, property
@@ -12907,7 +12907,7 @@ changing the link's title and style:
 
 #+cindex: @samp{ATTR_HTML}, keyword
 #+begin_example
-,#+ATTR_HTML: :title The Org mode homepage :style color:red;
+,#+ATTR_HTML: :title The Org mode website :style color:red;
 [[https://orgmode.org]]
 #+end_example
 
@@ -13546,10 +13546,12 @@ include:
   #+vindex: org-latex-default-table-mode
   The LaTeX export back-end wraps the table differently depending on
   the mode for accurate rendering of math symbols.  Mode is either
-  =table=, =math=, =inline-math= or =verbatim=.
+  =table=, =math=, =inline-math=, =verbatim= or =tabbing=.
 
   For =math= or =inline-math= mode, LaTeX export back-end wraps the
   table in a math environment, but every cell in it is exported as-is.
+  For =tabbing= the LaTeX tabbing environment is used and the correct
+  tabbing delimiters =\>= are used.
   The LaTeX export back-end determines the default mode from
   ~org-latex-default-table-mode~.  The LaTeX export back-end merges
   contiguous tables in the same mode into a single environment.
@@ -15474,7 +15476,7 @@ make that easier the function ~org-texinfo-kbd-macro~ is provided,
 which is intended to be used like this:
 
 #+begin_example
-#+macro: kbd (eval (org-texinfo-kbd-macro $1))
+,#+macro: kbd (eval (org-texinfo-kbd-macro $1))
 
 Type {{{kbd(C-c SPC)}}}.
 #+end_example
@@ -17542,6 +17544,13 @@ directory with {{{kbd(M-x cd RET DIRECTORY)}}}, and then not setting
 variable ~default-directory~.  Setting =mkdirp= header argument to
 a non-~nil~ value creates the directory, if necessary.
 
+Setting =dir= to the symbol ~attach~ or the string ~"'attach"~ will
+set =dir= to the directory returned by ~(org-attach-dir)~, set =:mkdir
+yes=, and insert any file paths, as when using =:results file=, which
+are under the node's attachment directory using =attachment:= links
+instead of the usual =file:= links.  Any returned path outside of the
+attachment directory will use =file:= links as per usual.
+
 For example, to save the plot file in the =Work/= folder of the home
 directory---notice tilde is expanded:
 
@@ -18174,10 +18183,11 @@ to pass data between code blocks.
 It is possible to export the /code/ of code blocks, the /results/ of
 code block evaluation, /both/ the code and the results of code block
 evaluation, or /none/.  Org defaults to exporting /code/ for most
-languages.  For some languages, such as ditaa, Org defaults to
-/results/.  To export just the body of code blocks, see [[*Literal
-Examples]].  To selectively export sub-trees of an Org document, see
-[[*Exporting]].
+languages and /results/ for inline code blocks.  For some languages,
+such as ditaa, Org defaults to /results/ both in ordinary source
+blocks and in inline source blocks.  To export just the body of code
+blocks, see [[*Literal Examples]].  To selectively export sub-trees of an
+Org document, see [[*Exporting]].
 
 #+cindex: @samp{exports}, header argument
 The =exports= header argument is to specify if that part of the Org
@@ -21032,6 +21042,17 @@ number.  Here are tips to speed up:
   (setq org-agenda-use-tag-inheritance nil)
   #+end_src
 
+  #+vindex: org-agenda-ignore-properties
+- Disable parsing of some drawer properties:
+
+  #+begin_src emacs-lisp
+  (setq org-agenda-ignore-properties '(effort appt stats category))
+  #+end_src
+
+  The drawer properties you can disable in the agenda are effort
+  estimates (~effort~), appointments (~appt~), statistics (~stats~)
+  and subtree-local categories (~category~).
+
 These options can be applied to selected agenda views.  For more
 details about generation of agenda views, see the docstrings for the
 relevant variables, and this [[https://orgmode.org/worg/agenda-optimization.html][dedicated Worg page]] for agenda
@@ -22046,6 +22067,10 @@ format]].  The day name is optional when you type the date yourself.
 However, any date inserted or modified by Org adds that day name, for
 reading convenience.
 
+#+findex: org-date
+#+findex: org-anniversary
+#+findex: org-cyclic
+#+findex: org-block
 [fn:60] When working with the standard diary expression functions, you
 need to be very careful with the order of the arguments.  That order
 depends evilly on the variable ~calendar-date-style~.  For example, to
@@ -22053,10 +22078,11 @@ specify a date December 12, 2005, the call might look like
 =(diary-date 12 1 2005)= or =(diary-date 1 12 2005)= or =(diary-date
 2005 12 1)=, depending on the settings.  This has been the source of
 much confusion.  Org mode users can resort to special versions of
-these functions like ~org-date~ or ~org-anniversary~.  These work just
-like the corresponding ~diary-~ functions, but with stable ISO order
-of arguments (year, month, day) wherever applicable, independent of
-the value of ~calendar-date-style~.
+these functions, namely ~org-date~, ~org-anniversary~, ~org-cyclic, and
+~org-block~.  These work just like the corresponding ~diary-~
+functions, but with stable ISO order of arguments (year, month, day)
+wherever applicable, independent of the value of
+~calendar-date-style~.
 
 [fn:61] See the variable ~org-read-date-prefer-future~.  You may set
 that variable to the symbol ~time~ to even make a time before now

@@ -4,7 +4,7 @@
 
 ;; Author: Eric Schulte
 ;; Keywords: literate programming, reproducible research
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 
 ;; This file is part of GNU Emacs.
 
@@ -37,6 +37,9 @@
 (declare-function org-latex-compile "ox-latex" (texfile &optional snippet))
 (declare-function org-latex-guess-inputenc "ox-latex" (header))
 (declare-function org-splice-latex-header "org" (tpl def-pkg pkg snippets-p &optional extra))
+(declare-function org-at-heading-p "org" (&optional _))
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
+(declare-function org-next-visible-heading "org" (arg))
 
 (defvar org-babel-tangle-lang-exts)
 (add-to-list 'org-babel-tangle-lang-exts '("latex" . "tex"))
@@ -61,7 +64,6 @@
     (pdfpng       . :any)
     (pdfwidth     . :any)
     (headers      . :any)
-    (packages     . :any)
     (buffer       . ((yes no))))
   "LaTeX-specific header arguments.")
 

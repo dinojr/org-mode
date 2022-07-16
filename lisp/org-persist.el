@@ -22,7 +22,7 @@
 
 ;;; Commentary:
 ;;
-;; This file implements persistant cache storage across Emacs sessions.
+;; This file implements persistent cache storage across Emacs sessions.
 ;; Both global and buffer-local data can be stored.  This
 ;; implementation is not meant to be used to store important data -
 ;; all the caches should be safe to remove at any time.
@@ -77,7 +77,7 @@
 ;;
 ;; Each data collection can be associated with a local or remote file,
 ;; its inode number, or contents hash.  The persistent data collection
-;; can later be accessed using either file bufer, file, inode, or
+;; can later be accessed using either file buffer, file, inode, or
 ;; contents hash.
 ;;
 ;; The data collections can be versioned and removed upon expiry.
@@ -158,7 +158,7 @@
 (declare-function org-at-heading-p "org" (&optional invisible-not-ok))
 
 
-(defconst org-persist--storage-version "2.4"
+(defconst org-persist--storage-version "2.5"
   "Persistent storage layout version.")
 
 (defgroup org-persist nil
@@ -196,7 +196,7 @@ password prompts to log in."
   :type '(choice (const :tag "Never" nil)
                  (const :tag "Always" t)
                  (number :tag "Keep not more than X files")
-                 (const :tag "Check if exist on remote" 'check-existence)))
+                 (const :tag "Check if exist on remote" check-existence)))
 
 (defcustom org-persist-default-expiry 30
   "Default expiry condition for persistent data.
@@ -207,7 +207,7 @@ data is deleted that number days after last access.  When a function,
 it should be a function returning non-nil when the data is expired.  The
 function will be called with a single argument - collection."
   :group 'org-persist
-  :type '(choice (const :tag "Never" 'never)
+  :type '(choice (const :tag "Never" never)
                  (const :tag "Always" nil)
                  (number :tag "Keep N days")
                  (function :tag "Function")))
@@ -256,11 +256,11 @@ They keys are conses of (container . associated).")
   "Whether to report read/write time.
 
 When the value is a number, it is a threshold number of seconds.  If
-the read/write time of a single variable exceeds the threashold, a
+the read/write time of a single variable exceeds the threshold, a
 message is displayed.
 
 When the value is a non-nil non-number, always display the message.
-When the value is nil, never diplay the message.")
+When the value is nil, never display the message.")
 
 ;;;; Common functions
 
@@ -303,7 +303,9 @@ FORMAT and ARGS are passed to `message'."
        ;; Remove problematic file.
        (unless (bufferp buffer-or-file) (delete-file buffer-or-file))
        ;; Do not report the known error to user.
-       (unless (string-match-p "Invalid read syntax" (error-message-string err))
+       (if (string-match-p "Invalid read syntax" (error-message-string err))
+           (message "Emacs reader failed to read data in %S. The error was: %S"
+                    buffer-or-file (error-message-string err))
          (warn "Emacs reader failed to read data in %S. The error was: %S"
                buffer-or-file (error-message-string err)))
        nil))))
@@ -344,8 +346,8 @@ FORMAT and ARGS are passed to `message'."
      (`nil t)
      (`never nil)
      ((pred numberp)
-      (when (plist-get ,collection :access-time)
-        (<= (float-time) (+ (plist-get ,collection :access-time) (* ,cnd 24 60 60)))))
+      (when (plist-get ,collection :last-access)
+        (> (float-time) (+ (plist-get ,collection :last-access) (* ,cnd 24 60 60)))))
      ((pred functionp)
       (funcall ,cnd ,collection))
      (_ (error "org-persist: Unsupported expiry type %S" ,cnd))))
@@ -504,7 +506,7 @@ MISC, if non-nil will be appended to the collection."
 (defmacro org-persist-read:generic (container reference-data collection)
   "Read and return the data stored in CONTAINER.
 REFERENCE-DATA is associated with CONTAINER in the persist file.
-COLLECTION is the plist holding data collectin."
+COLLECTION is the plist holding data collection."
   `(let* ((c (org-persist--normalize-container ,container))
           (read-func-symbol (intern (format "org-persist-read:%s" (car c)))))
      (setf ,collection (plist-put ,collection :last-access (float-time)))
@@ -552,7 +554,7 @@ COLLECTION is the plist holding data collectin."
 (defmacro org-persist-load:generic (container reference-data collection)
   "Load the data stored in CONTAINER for side effects.
 REFERENCE-DATA is associated with CONTAINER in the persist file.
-COLLECTION is the plist holding data collectin."
+COLLECTION is the plist holding data collection."
   `(let* ((container (org-persist--normalize-container ,container))
           (load-func-symbol (intern (format "org-persist-load:%s" (car container)))))
      (setf ,collection (plist-put ,collection :last-access (float-time)))
@@ -747,6 +749,10 @@ When ASSOCIATED is `all', unregister CONTAINER everywhere."
                      (remove container (plist-get collection :container)))
           (org-persist--add-to-index collection))))))
 
+(defvar org-persist--write-cache (make-hash-table :test #'equal)
+  "Hash table storing as-written data objects.
+
+This data is used to avoid reading the data multiple times.")
 (defun org-persist-read (container &optional associated hash-must-match load?)
   "Restore CONTAINER data for ASSOCIATED.
 When HASH-MUST-MATCH is non-nil, do not restore data if hash for
@@ -781,15 +787,17 @@ When LOAD? is non-nil, load the data instead of reading."
         (unless (seq-find (lambda (v)
                             (run-hook-with-args-until-success 'org-persist-before-read-hook v associated))
                           (plist-get collection :container))
-          (setq data (org-persist--read-elisp-file persist-file))
-          (cl-loop for container in (plist-get collection :container)
-                   with result = nil
-                   do
-                   (if load?
-                       (push (org-persist-load:generic container (alist-get container data nil nil #'equal) collection) result)
-                     (push (org-persist-read:generic container (alist-get container data nil nil #'equal) collection) result))
-                   (run-hook-with-args 'org-persist-after-read-hook container associated)
-                   finally return (if (= 1 (length result)) (car result) result)))))))
+          (setq data (or (gethash persist-file org-persist--write-cache)
+                         (org-persist--read-elisp-file persist-file)))
+          (when data
+            (cl-loop for container in (plist-get collection :container)
+                     with result = nil
+                     do
+                     (if load?
+                         (push (org-persist-load:generic container (alist-get container data nil nil #'equal) collection) result)
+                       (push (org-persist-read:generic container (alist-get container data nil nil #'equal) collection) result))
+                     (run-hook-with-args 'org-persist-after-read-hook container associated)
+                     finally return (if (= 1 (length result)) (car result) result))))))))
 
 (defun org-persist-load (container &optional associated hash-must-match)
   "Load CONTAINER data for ASSOCIATED.
@@ -845,6 +853,7 @@ When IGNORE-RETURN is non-nil, just return t on success without calling
           (let ((file (org-file-name-concat org-persist-directory (plist-get collection :persist-file)))
                 (data (mapcar (lambda (c) (cons c (org-persist-write:generic c collection)))
                               (plist-get collection :container))))
+            (puthash file data org-persist--write-cache)
             (org-persist--write-elisp-file file data)
             (or ignore-return (org-persist-read container associated))))))))
 
@@ -903,7 +912,7 @@ Do nothing in an indirect buffer."
        (delete-directory (file-name-directory ,persist-file)))))
 
 (defun org-persist-gc ()
-  "Remove expired or unregisted containers.
+  "Remove expired or unregistered containers.
 Also, remove containers associated with non-existing files."
   (unless (and org-persist-disable-when-emacs-Q
                ;; FIXME: This is relying on undocumented fact that
@@ -929,7 +938,7 @@ Also, remove containers associated with non-existing files."
                           ('t t)
                           ('check-existence
                            (file-exists-p file))
-                          ((pred #'numberp)
+                          ((pred numberp)
                            (<= org-persist-remote-files remote-files-num))
                           (_ nil)))
                 (setq expired? t)))

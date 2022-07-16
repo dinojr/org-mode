@@ -4,7 +4,7 @@
 ;;
 ;; Maintainer: Ihor Radchenko <yantar92 at gmail dot com>
 ;; Keywords: folding, visibility cycling, invisible text
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -115,6 +115,16 @@ This can also be set in on a per-file basis with
 
 #+STARTUP: hideblocks
 #+STARTUP: nohideblocks"
+  :group 'org-startup
+  :group 'org-cycle
+  :type 'boolean)
+
+(defcustom org-cycle-hide-drawer-startup t
+  "Non-nil means entering Org mode will fold all drawers.
+This can also be set in on a per-file basis with
+
+#+STARTUP: hidedrawers
+#+STARTUP: nohidedrawers"
   :group 'org-startup
   :group 'org-cycle
   :type 'boolean)
@@ -603,7 +613,7 @@ With a numeric prefix, show all headlines up to that level."
     (when org-cycle-hide-block-startup (org-fold-hide-block-all))
     (org-cycle-set-visibility-according-to-property)
     (org-cycle-hide-archived-subtrees 'all)
-    (org-cycle-hide-drawers 'all)
+    (when org-cycle-hide-drawer-startup (org-cycle-hide-drawers 'all))
     (org-cycle-show-empty-lines t)))
 
 (defun org-cycle-set-visibility-according-to-property ()

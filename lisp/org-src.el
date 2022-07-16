@@ -6,7 +6,7 @@
 ;;	   Bastien Guerry <bzg@gnu.org>
 ;;         Dan Davison <davison at stats dot ox dot ac dot uk>
 ;; Keywords: outlines, hypermedia, calendar, wp
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -171,6 +171,7 @@ Values that modify the window layout (reorganize-frame, split-window-below,
 split-window-right) will restore the layout after exiting the edit buffer."
   :group 'org-edit-structure
   :type '(choice
+          (const plain)
 	  (const current-window)
 	  (const split-window-below)
 	  (const split-window-right)
@@ -636,7 +637,7 @@ as `org-src-fontify-natively' is non-nil."
 	    ;; Add string and a final space to ensure property change.
 	    (insert string " "))
 	  (unless (eq major-mode lang-mode) (funcall lang-mode))
-	  (org-font-lock-ensure)
+          (font-lock-ensure)
 	  (let ((pos (point-min)) next)
 	    (while (setq next (next-property-change pos))
 	      ;; Handle additional properties from font-lock, so as to
@@ -821,7 +822,7 @@ See also `org-src-mode-hook'."
 
 (defun org-src-associate-babel-session (info)
   "Associate edit buffer with comint session.
-INFO should be a list simlar in format to the return value of
+INFO should be a list similar in format to the return value of
 `org-babel-get-src-block-info'."
   (interactive)
   (let ((session (cdr (assq :session (nth 2 info)))))

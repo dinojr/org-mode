@@ -5,7 +5,7 @@
 ;; Authors: Eric Schulte
 ;;	Dan Davison
 ;; Keywords: literate programming, reproducible research
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 
 ;; This file is part of GNU Emacs.
 
@@ -42,6 +42,7 @@
 (defvar org-src-preserve-indentation)
 (defvar org-babel-tangle-uncomment-comments)
 
+(declare-function org-attach-dir "org-attach" (&optional create-if-not-exists-p no-fs-check))
 (declare-function org-at-item-p "org-list" ())
 (declare-function org-at-table-p "org" (&optional table-type))
 (declare-function org-babel-lob-execute-maybe "ob-lob" ())
@@ -481,12 +482,14 @@ For the format of SAFE-LIST, see `org-babel-safe-header-args'."
 This is a list in which each element is an alist.  Each key
 corresponds to a header argument, and each value to that header's
 value.  The value can either be a string or a closure that
-evaluates to a string.  The closure is evaluated when the source
-block is being evaluated (e.g. during execution or export), with
-point at the source block.  It is not possible to use an
-arbitrary function symbol (e.g. 'some-func), since org uses
-lexical binding.  To achieve the same functionality, call the
-function within a closure (e.g. (lambda () (some-func))).
+evaluates to a string.
+
+A closure is evaluated when the source block is being
+evaluated (e.g. during execution or export), with point at the
+source block.  It is not possible to use an arbitrary function
+symbol (e.g. \\='some-func), since org uses lexical binding.  To
+achieve the same functionality, call the function within a
+closure (e.g. (lambda () (some-func))).
 
 To understand how closures can be used as default header
 arguments, imagine you'd like to set the file name output of a
@@ -503,7 +506,16 @@ this with:
 
 Because the closure is evaluated with point at the source block,
 the call to `org-element-at-point' above will always retrieve
-information about the current source block.")
+information about the current source block.
+
+Some header arguments can be provided multiple times for a source
+block.  An example of such a header argument is :var.  This
+functionality is also supported for default header arguments by
+providing the header argument multiple times in the alist.  For
+example:
+
+\\='((:var . \"foo=\\\"bar\\\"\")
+  (:var . \"bar=\\\"foo\\\"\"))")
 
 (put 'org-babel-default-header-args 'safe-local-variable
      (org-babel-header-args-safe-fn org-babel-safe-header-args))
@@ -738,7 +750,8 @@ block."
 	    (forward-line)
 	    (skip-chars-forward " \t")
 	    (let ((result (org-babel-read-result)))
-	      (message (replace-regexp-in-string "%" "%%" (format "%S" result)))
+	      (message (format "Cached: %s"
+                               (replace-regexp-in-string "%" "%%" (format "%S" result))))
 	      result)))
 	 ((org-babel-confirm-evaluate info)
 	  (let* ((lang (nth 0 info))
@@ -801,7 +814,8 @@ block."
 		    (let ((*this* (if (not file) result
 				    (org-babel-result-to-file
 				     file
-				     (org-babel--file-desc params result)))))
+				     (org-babel--file-desc params result)
+                                     'attachment))))
 		      (setq result (org-babel-ref-resolve post))
 		      (when file
 			(setq result-params (remove "file" result-params))))))
@@ -2298,11 +2312,14 @@ INFO may provide the values of these header arguments (in the
   (cond ((stringp result)
 	 (setq result (org-no-properties result))
 	 (when (member "file" result-params)
-	   (setq result (org-babel-result-to-file
-			 result
-			 (org-babel--file-desc (nth 2 info) result)))))
+	   (setq result
+                 (org-babel-result-to-file
+		  result
+		  (org-babel--file-desc (nth 2 info) result)
+                  'attachment))))
 	((listp result))
 	(t (setq result (format "%S" result))))
+
   (if (and result-params (member "silent" result-params))
       (progn (message (replace-regexp-in-string "%" "%%" (format "%S" result)))
 	     result)
@@ -2605,27 +2622,49 @@ in the buffer."
 		 (line-beginning-position 2))
 	     (point))))))
 
-(defun org-babel-result-to-file (result &optional description)
+(defun org-babel-result-to-file (result &optional description type)
   "Convert RESULT into an Org link with optional DESCRIPTION.
 If the `default-directory' is different from the containing
-file's directory then expand relative links."
+file's directory then expand relative links.
+
+If the optional TYPE is passed as \\='attachment and the path is a
+descendant of the DEFAULT-DIRECTORY, the generated link will be
+specified as an an \"attachment:\" style link."
   (when (stringp result)
-    (let ((same-directory?
-	   (and (buffer-file-name (buffer-base-buffer))
-		(not (string= (expand-file-name default-directory)
-			      (expand-file-name
-			       (file-name-directory
-			        (buffer-file-name (buffer-base-buffer)))))))))
-      (format "[[file:%s]%s]"
-	      (if (and default-directory
-		       (buffer-file-name (buffer-base-buffer)) same-directory?)
-		  (if (eq org-link-file-path-type 'adaptive)
-		      (file-relative-name
-		       (expand-file-name result default-directory)
-		       (file-name-directory
-			(buffer-file-name (buffer-base-buffer))))
-		    (expand-file-name result default-directory))
-		result)
+    (let* ((result-file-name (expand-file-name result))
+           (base-file-name (buffer-file-name (buffer-base-buffer)))
+           (base-directory (and buffer-file-name
+                                (file-name-directory base-file-name)))
+           (same-directory?
+	    (and base-file-name
+	         (not (string= (expand-file-name default-directory)
+			       (expand-file-name
+			        base-directory)))))
+           (request-attachment (eq type 'attachment))
+           (attach-dir (let* ((default-directory base-directory)
+                              (dir (org-attach-dir nil t)))
+                         (when dir
+                           (expand-file-name dir))))
+           (in-attach-dir (and request-attachment
+                               attach-dir
+                               (string-prefix-p
+                                attach-dir
+                                result-file-name))))
+      (format "[[%s:%s]%s]"
+              (pcase type
+                ((and 'attachment (guard in-attach-dir)) "attachment")
+                (_ "file"))
+              (if (and request-attachment in-attach-dir)
+                  (file-relative-name result-file-name)
+	        (if (and default-directory
+		         base-file-name same-directory?)
+		    (if (eq org-link-file-path-type 'adaptive)
+		        (file-relative-name
+		         result-file-name
+                         (file-name-directory
+			  base-file-name))
+		      result-file-name)
+		  result))
 	      (if description (concat "[" description "]") "")))))
 
 (defun org-babel-examplify-region (beg end &optional results-switches inline)
@@ -2721,6 +2760,11 @@ parameters when merging lists."
 	(pcase pair
 	  (`(:var . ,value)
 	   (let ((name (cond
+                        ;; Default header arguments can accept lambda
+                        ;; functions.  We uniquely identify the var
+                        ;; according to the full string contents of
+                        ;; the lambda function.
+			((functionp value) value)
 			((listp value) (car value))
 			((string-match "^\\([^= \f\t\n\r\v]+\\)[ \t]*=" value)
 			 (intern (match-string 1 value)))
@@ -2756,10 +2800,17 @@ parameters when merging lists."
 	   (setq exports (funcall merge
 				  exports-exclusive-groups
 				  exports
-				  (split-string
+                                  (split-string
                                    (cond ((and value (functionp value)) (funcall value))
                                          (value value)
                                          (t ""))))))
+          ((or '(:dir . attach) '(:dir . "'attach"))
+           (unless (org-attach-dir nil t)
+             (error "No attachment directory for element (add :ID: or :DIR: property)"))
+           (setq params (append
+                         `((:dir . ,(org-attach-dir nil t))
+                           (:mkdirp . "yes"))
+                         (assq-delete-all :dir (assq-delete-all :mkdir params)))))
 	  ;; Regular keywords: any value overwrites the previous one.
 	  (_ (setq params (cons pair (assq-delete-all (car pair) params)))))))
     ;; Handle `:var' and clear out colnames and rownames for replaced
@@ -3121,6 +3172,23 @@ additionally processed by `shell-quote-argument'."
 Used by `org-babel-temp-file'.  This directory will be removed on
 Emacs shutdown."))
 
+(defvar org-babel-temporary-stable-directory)
+(unless (or noninteractive (boundp 'org-babel-temporary-stable-directory))
+  (defvar org-babel-temporary-stable-directory
+    (or (and (boundp 'org-babel-temporary-stable-directory)
+	     (file-exists-p org-babel-temporary-stable-directory)
+	     org-babel-temporary-stable-directory)
+        (let (dir)
+          (while (or (not dir) (file-exists-p dir))
+            (setq dir (expand-file-name
+                       (format "babel-stable-%d" (random 1000))
+                       (temporary-file-directory))))
+          (make-directory dir)
+          dir))
+    "Directory to hold temporary files created to execute code blocks.
+Used by `org-babel-temp-file'.  This directory will be removed on
+Emacs shutdown."))
+
 (defcustom org-babel-remote-temporary-directory "/tmp/"
   "Directory to hold temporary files on remote hosts."
   :group 'org-babel
@@ -3164,6 +3232,30 @@ of `org-babel-temporary-directory'."
 	       temporary-file-directory)))
       (make-temp-file prefix nil suffix))))
 
+(defun org-babel-temp-stable-file (data prefix &optional suffix)
+  "Create a temporary file in the `org-babel-remove-temporary-stable-directory'.
+The file name is stable with respect to DATA.  The file name is
+constructed like the following: PREFIXDATAhashSUFFIX."
+  (if (file-remote-p default-directory)
+      (let* ((prefix
+              (concat (file-remote-p default-directory)
+                      (expand-file-name
+		       prefix org-babel-temporary-stable-directory)))
+             (path (concat prefix (format "%s" (sxhash data)) (or suffix ""))))
+        (with-temp-file path)
+        path)
+    (let* ((temporary-file-directory
+	    (or (and (boundp 'org-babel-temporary-stable-directory)
+		     (file-exists-p org-babel-temporary-stable-directory)
+		     org-babel-temporary-stable-directory)
+	        temporary-file-directory))
+           (path (concat
+                  (expand-file-name
+		   prefix org-babel-temporary-stable-directory)
+                  (format "%s" (sxhash data)) (or suffix ""))))
+      (with-temp-file path)
+      path)))
+
 (defun org-babel-remove-temporary-directory ()
   "Remove `org-babel-temporary-directory' on Emacs shutdown."
   (when (and (boundp 'org-babel-temporary-directory)
@@ -3187,7 +3279,16 @@ of `org-babel-temporary-directory'."
 		    org-babel-temporary-directory
 		  "[directory not defined]"))))))
 
+(defun org-babel-remove-temporary-stable-directory ()
+  "Remove `org-babel-temporary-stable-directory' and on Emacs shutdown."
+  (when (and (boundp 'org-babel-temporary-stable-directory)
+	     (file-exists-p org-babel-temporary-stable-directory))
+    (let ((org-babel-temporary-directory
+           org-babel-temporary-stable-directory))
+      (org-babel-remove-temporary-directory))))
+
 (add-hook 'kill-emacs-hook #'org-babel-remove-temporary-directory)
+(add-hook 'kill-emacs-hook #'org-babel-remove-temporary-stable-directory)
 
 (defun org-babel-one-header-arg-safe-p (pair safe-list)
   "Determine if the PAIR is a safe babel header arg according to SAFE-LIST.

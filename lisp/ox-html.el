@@ -43,6 +43,9 @@
 (declare-function org-id-find-id-file "org-id" (id))
 (declare-function htmlize-region "ext:htmlize" (beg end))
 (declare-function mm-url-decode-entities "mm-url" ())
+(declare-function org-at-heading-p "org" (&optional _))
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
+(declare-function org-next-visible-heading "org" (arg))
 
 (defvar htmlize-css-name-prefix)
 (defvar htmlize-output-type)
@@ -1182,10 +1185,9 @@ font          The font to use with HTML-CSS and SVG output.  As of MathJax 2.5
 linebreaks    Let MathJax perform automatic linebreaks.  Valid values
               are \"true\" and \"false\".
 indent        If align is not center, how far from the left/right side?
-              Valid values are \"left\" and \"right\"
 multlinewidth The width of the multline environment.
 autonumber    How to number equations.  Valid values are \"None\",
-              \"all\" and \"AMS Math\".
+              \"All\" and \"AMS\".
 tagindent     The amount tags are indented.
 tagside       Which side to show tags/labels on.  Valid values are
               \"left\" and \"right\"
@@ -1881,7 +1883,6 @@ INFO is a plist used as a communication channel."
 	 ;; empty, which is invalid.
 	 (title (if (org-string-nw-p title) title "&lrm;"))
 	 (charset (or (and org-html-coding-system
-			   (fboundp 'coding-system-get)
 			   (symbol-name
 			    (coding-system-get org-html-coding-system
 					       'mime-charset)))
@@ -2068,7 +2069,7 @@ holding export options."
 	 (format "%s\n"
 		 (format decl
 			 (or (and org-html-coding-system
-				  (fboundp 'coding-system-get)
+                                  ;; FIXME: Use Emacs 22 style here, see `coding-system-get'.
 				  (coding-system-get org-html-coding-system 'mime-charset))
 			     "iso-8859-1"))))))
    (org-html-doctype info)
@@ -2222,7 +2223,7 @@ is the language used for CODE, as a string, or nil."
 		    (funcall lang-mode)
 		    (insert code)
 		    ;; Fontify buffer.
-		    (org-font-lock-ensure)
+                    (font-lock-ensure)
 		    ;; Remove formatting on newline characters.
 		    (save-excursion
 		      (let ((beg (point-min))
@@ -2909,7 +2910,7 @@ Starred and \"displaymath\" environments are not numbered."
 
 (defun org-html--unlabel-latex-environment (latex-frag)
   "Change environment in LATEX-FRAG string to an unnumbered one.
-For instance, change an 'equation' environment to 'equation*'."
+For instance, change an \\='equation\\=' environment to \\='equation*\\='."
   (replace-regexp-in-string
    "\\`[ \t]*\\\\begin{\\([^*]+?\\)}"
    "\\1*"

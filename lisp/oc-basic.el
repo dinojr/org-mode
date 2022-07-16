@@ -189,7 +189,14 @@ Return a hash table with citation references as keys and fields alist as values.
                                 (cons 'year
                                       (cond
                                        ((consp date)
-                                        (caar date))
+                                         (let ((year (caar date)))
+                                           (cond
+                                             ((numberp year) (number-to-string year))
+                                             ((stringp year) year)
+                                             (t
+                                               (error
+                                                 "First element of CSL-JSON date-parts should be a number or string, got %s: %S"
+                                                 (type-of year) year)))))
                                        ((stringp date)
                                         (replace-regexp-in-string
                                           (rx
@@ -214,6 +221,10 @@ Return a hash table with citation references as keys and fields alist as values.
   (let ((entries (make-hash-table :test #'equal))
         (bibtex-sort-ignore-string-entries t))
     (bibtex-set-dialect dialect t)
+    ;; Throw an error if bibliography is malformed.
+    (unless (bibtex-validate)
+      (user-error "Malformed bibliography at %S"
+                  (or (buffer-file-name) (current-buffer))))
     (bibtex-map-entries
      (lambda (key &rest _)
        ;; Normalize entries: field names are turned into symbols
@@ -258,21 +269,26 @@ Optional argument INFO is the export state, as a property list."
             (when (or (org-file-has-changed-p file)
                       (not (gethash file org-cite-basic--file-id-cache)))
               (insert-file-contents file)
+              (setf (buffer-file-name) file)
               (puthash file (org-buffer-hash) org-cite-basic--file-id-cache))
-	    (let* ((file-id (cons file (gethash file org-cite-basic--file-id-cache)))
-                   (entries
-                    (or (cdr (assoc file-id org-cite-basic--bibliography-cache))
-                        (let ((table
-                               (pcase (file-name-extension file)
-                                 ("json" (org-cite-basic--parse-json))
-                                 ("bib" (org-cite-basic--parse-bibtex 'biblatex))
-                                 ("bibtex" (org-cite-basic--parse-bibtex 'BibTeX))
-                                 (ext
-                                  (user-error "Unknown bibliography extension: %S"
-                                              ext)))))
-                          (push (cons file-id table) org-cite-basic--bibliography-cache)
-                          table))))
-              (push (cons file entries) results)))))
+            (condition-case nil
+                (unwind-protect
+	            (let* ((file-id (cons file (gethash file org-cite-basic--file-id-cache)))
+                           (entries
+                            (or (cdr (assoc file-id org-cite-basic--bibliography-cache))
+                                (let ((table
+                                       (pcase (file-name-extension file)
+                                         ("json" (org-cite-basic--parse-json))
+                                         ("bib" (org-cite-basic--parse-bibtex 'biblatex))
+                                         ("bibtex" (org-cite-basic--parse-bibtex 'BibTeX))
+                                         (ext
+                                          (user-error "Unknown bibliography extension: %S"
+                                                      ext)))))
+                                  (push (cons file-id table) org-cite-basic--bibliography-cache)
+                                  table))))
+                      (push (cons file entries) results))
+                  (setf (buffer-file-name) nil))
+              (error (setq org-cite-basic--file-id-cache nil))))))
       (when info (plist-put info :cite-basic/bibliography results))
       results)))
 
@@ -329,7 +345,7 @@ non-nil."
   "Return a list of family names from a list of full NAMES.
 
 To better accomomodate corporate names, this will only shorten
-personal names of the form 'family, given'."
+personal names of the form \"family, given\"."
   (when (stringp names)
     (mapconcat
      (lambda (name)

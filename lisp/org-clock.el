@@ -4,7 +4,7 @@
 
 ;; Author: Carsten Dominik <carsten.dominik@gmail.com>
 ;; Keywords: outlines, hypermedia, calendar, wp
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -493,7 +493,7 @@ This variable only has effect if set with \\[customize]."
          (if value
              (add-hook 'kill-emacs-query-functions #'org-clock-kill-emacs-query)
            (remove-hook 'kill-emacs-query-functions #'org-clock-kill-emacs-query))
-         (set symbol value))
+         (set-default-toplevel-value symbol value))
   :type 'boolean
   :package-version '(Org . "9.5"))
 
@@ -661,7 +661,6 @@ there is no recent clock to choose from."
 		     (if (< i 10)
 			 (+ i ?0)
 		       (+ i (- ?A 10))) m))
-	    (if (fboundp 'int-to-char) (setf (car s) (int-to-char (car s))))
 	    (push s sel-list)))
 	(run-hooks 'org-clock-before-select-task-hook)
 	(goto-char (point-min))
@@ -2123,7 +2122,7 @@ fontified, and then returned."
     (org-mode)
     (org-create-dblock props)
     (org-update-dblock)
-    (org-font-lock-ensure)
+    (font-lock-ensure)
     (forward-line 2)
     (buffer-substring (point) (progn
 				(re-search-forward "^[ \t]*#\\+END" nil t)

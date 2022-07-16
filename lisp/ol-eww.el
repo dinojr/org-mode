@@ -4,7 +4,7 @@
 
 ;; Author: Marco Wahl <marcowahlsoft>a<gmailcom>
 ;; Keywords: link, eww
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 
 ;; This file is part of GNU Emacs.
 
@@ -107,7 +107,7 @@ keep the structure of the Org file."
       (setq transform-start (region-beginning))
       (setq transform-end (region-end))
       ;; Deactivate mark if current mark is activate.
-      (when (fboundp 'deactivate-mark) (deactivate-mark)))
+      (deactivate-mark))
     (message "Transforming links...")
     (save-excursion
       (goto-char transform-start)

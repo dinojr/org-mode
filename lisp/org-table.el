@@ -4,7 +4,7 @@
 
 ;; Author: Carsten Dominik <carsten.dominik@gmail.com>
 ;; Keywords: outlines, hypermedia, calendar, wp
-;; Homepage: https://orgmode.org
+;; URL: https://orgmode.org
 ;;
 ;; This file is part of GNU Emacs.
 ;;
@@ -3667,8 +3667,6 @@ With prefix ARG, apply the new formulas to the table."
       (goto-char pos)
       (call-interactively 'lisp-indent-line))
      ((looking-at "[$&@0-9a-zA-Z]+ *= *[^ \t\n']") (goto-char pos))
-     ((not (fboundp 'pp-buffer))
-      (user-error "Cannot pretty-print.  Command `pp-buffer' is not available"))
      ((looking-at "[$&@0-9a-zA-Z]+ *= *'(")
       (goto-char (- (match-end 0) 2))
       (setq beg (point))
@@ -4081,7 +4079,7 @@ COLUMNS is a sorted list of column numbers.  BEG and END are,
 respectively, the beginning position and the end position of the
 table."
   (org-with-wide-buffer
-   (org-font-lock-ensure beg end)
+   (font-lock-ensure beg end)
    (dolist (c columns)
      (goto-char beg)
      (let ((align nil)
@@ -4203,7 +4201,7 @@ beginning and end position of the current table."
      (org-table-expand begin end)
      ;; Make sure invisible characters in the table are at the right
      ;; place since column widths take them into account.
-     (org-font-lock-ensure begin end)
+     (font-lock-ensure begin end)
      (org-table--shrink-columns (sort columns #'<) begin end))))
 
 ;;;###autoload
@@ -4335,7 +4333,7 @@ FIELD is a string.  WIDTH is a number.  ALIGN is either \"c\",
     (org-table-save-field
      ;; Make sure invisible characters in the table are at the right
      ;; place since column widths take them into account.
-     (org-font-lock-ensure beg end)
+     (font-lock-ensure beg end)
      (move-marker org-table-aligned-begin-marker beg)
      (move-marker org-table-aligned-end-marker end)
      (goto-char beg)
@@ -5167,15 +5165,13 @@ When LOCAL is non-nil, show references for the table at point."
 		    (concat orgtbl-line-start-regexp "\\|"
 			    auto-fill-inhibit-regexp)
 		  orgtbl-line-start-regexp))
-    (when (fboundp 'font-lock-add-keywords)
-      (font-lock-add-keywords nil orgtbl-extra-font-lock-keywords)
-      (org-restart-font-lock)))
+    (font-lock-add-keywords nil orgtbl-extra-font-lock-keywords)
+    (org-restart-font-lock))
    (t
     (setq auto-fill-inhibit-regexp org-old-auto-fill-inhibit-regexp)
     (remove-hook 'before-change-functions 'org-before-change-function t)
-    (when (fboundp 'font-lock-remove-keywords)
-      (font-lock-remove-keywords nil orgtbl-extra-font-lock-keywords)
-      (org-restart-font-lock))
+    (font-lock-remove-keywords nil orgtbl-extra-font-lock-keywords)
+    (org-restart-font-lock)
     (force-mode-line-update 'all))))
 
 (defun orgtbl-make-binding (fun n &rest keys)
@@ -5290,6 +5286,7 @@ to execute outside of tables."
       (org-remap orgtbl-mode-map
 		 'self-insert-command 'orgtbl-self-insert-command
 		 'delete-char 'org-delete-char
+                 'delete-forward-char 'org-delete-char
 		 'delete-backward-char 'org-delete-backward-char)
       (org-defkey orgtbl-mode-map "|" 'org-force-self-insert))
     t))
@@ -5466,7 +5463,7 @@ The table is taken from the parameter TXT, or from the buffer at point."
         (nreverse table)))))
 
 (defun org-table-collapse-header (table &optional separator max-header-lines)
-  "Collapse the lines before 'hline into a single header.
+  "Collapse the lines before \\='hline into a single header.
 
 The given TABLE is a list of lists as returned by `org-table-to-lisp'.
 The leading lines before the first `hline' symbol are considered

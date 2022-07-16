@@ -86,6 +86,9 @@
 (declare-function org-publish-all "ox-publish" (&optional force async))
 (declare-function org-publish-current-file "ox-publish" (&optional force async))
 (declare-function org-publish-current-project "ox-publish" (&optional force async))
+(declare-function org-at-heading-p "org" (&optional _))
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
+(declare-function org-next-visible-heading "org" (arg))
 
 (defvar org-publish-project-alist)
 (defvar org-table-number-fraction)
@@ -2938,135 +2941,142 @@ still inferior to file-local settings.
 Return code as a string."
   (when (symbolp backend) (setq backend (org-export-get-backend backend)))
   (org-export-barf-if-invalid-backend backend)
-  (save-excursion
-    (save-restriction
-      ;; Narrow buffer to an appropriate region or subtree for
-      ;; parsing.  If parsing subtree, be sure to remove main
-      ;; headline, planning data and property drawer.
-      (cond ((org-region-active-p)
-	     (narrow-to-region (region-beginning) (region-end)))
-	    (subtreep
-	     (org-narrow-to-subtree)
-	     (goto-char (point-min))
-	     (org-end-of-meta-data)
-	     (narrow-to-region (point) (point-max))))
-      ;; Initialize communication channel with original buffer
-      ;; attributes, unavailable in its copy.
-      (let* ((org-export-current-backend (org-export-backend-name backend))
-	     (info (org-combine-plists
-		    (org-export--get-export-attributes
-		     backend subtreep visible-only body-only)
-		    (org-export--get-buffer-attributes)))
-	     (parsed-keywords
-	      (delq nil
-		    (mapcar (lambda (o) (and (eq (nth 4 o) 'parse) (nth 1 o)))
-			    (append (org-export-get-all-options backend)
-				    org-export-options-alist))))
-	     tree)
-	;; Update communication channel and get parse tree.  Buffer
-	;; isn't parsed directly.  Instead, all buffer modifications
-	;; and consequent parsing are undertaken in a temporary copy.
-	(org-export-with-buffer-copy
-	 ;; Run first hook with current back-end's name as argument.
-	 (run-hook-with-args 'org-export-before-processing-hook
-			     (org-export-backend-name backend))
-	 (org-export-expand-include-keyword)
-	 (org-export--delete-comment-trees)
-	 (org-macro-initialize-templates org-export-global-macros)
-	 (org-macro-replace-all org-macro-templates parsed-keywords)
-	 ;; Refresh buffer properties and radio targets after previous
-	 ;; potentially invasive changes.
-	 (org-set-regexps-and-options)
-	 (org-update-radio-target-regexp)
-	 ;;  Possibly execute Babel code.  Re-run a macro expansion
-	 ;;  specifically for {{{results}}} since inline source blocks
-	 ;;  may have generated some more.  Refresh buffer properties
-	 ;;  and radio targets another time.
-	 (when org-export-use-babel
-	   (org-babel-exp-process-buffer)
-	   (org-macro-replace-all '(("results" . "$1")) parsed-keywords)
+  (org-fold-core-ignore-modifications
+    (save-excursion
+      (save-restriction
+        ;; Narrow buffer to an appropriate region or subtree for
+        ;; parsing.  If parsing subtree, be sure to remove main
+        ;; headline, planning data and property drawer.
+        (cond ((org-region-active-p)
+	       (narrow-to-region (region-beginning) (region-end)))
+	      (subtreep
+	       (org-narrow-to-subtree)
+	       (goto-char (point-min))
+	       (org-end-of-meta-data)
+	       (narrow-to-region (point) (point-max))))
+        ;; Initialize communication channel with original buffer
+        ;; attributes, unavailable in its copy.
+        (let* ((org-export-current-backend (org-export-backend-name backend))
+	       (info (org-combine-plists
+		      (org-export--get-export-attributes
+		       backend subtreep visible-only body-only)
+		      (org-export--get-buffer-attributes)))
+	       (parsed-keywords
+	        (delq nil
+		      (mapcar (lambda (o) (and (eq (nth 4 o) 'parse) (nth 1 o)))
+			      (append (org-export-get-all-options backend)
+				      org-export-options-alist))))
+	       tree modified-tick)
+	  ;; Update communication channel and get parse tree.  Buffer
+	  ;; isn't parsed directly.  Instead, all buffer modifications
+	  ;; and consequent parsing are undertaken in a temporary copy.
+	  (org-export-with-buffer-copy
+           (font-lock-mode -1)
+	   ;; Run first hook with current back-end's name as argument.
+	   (run-hook-with-args 'org-export-before-processing-hook
+			       (org-export-backend-name backend))
+	   (org-export-expand-include-keyword)
+	   (org-export--delete-comment-trees)
+	   (org-macro-initialize-templates org-export-global-macros)
+	   (org-macro-replace-all org-macro-templates parsed-keywords)
+	   ;; Refresh buffer properties and radio targets after previous
+	   ;; potentially invasive changes.
 	   (org-set-regexps-and-options)
-	   (org-update-radio-target-regexp))
-	 ;; Run last hook with current back-end's name as argument.
-	 ;; Update buffer properties and radio targets one last time
-	 ;; before parsing.
-	 (goto-char (point-min))
-	 (save-excursion
-	   (run-hook-with-args 'org-export-before-parsing-hook
-			       (org-export-backend-name backend)))
-	 (org-set-regexps-and-options)
-	 (org-update-radio-target-regexp)
-	 ;; Update communication channel with environment.
-	 (setq info
-	       (org-combine-plists
-		info (org-export-get-environment backend subtreep ext-plist)))
-         ;; Pre-process citations environment, i.e. install
-	 ;; bibliography list, and citation processor in INFO.
-	 (org-cite-store-bibliography info)
-         (org-cite-store-export-processor info)
-	 ;; De-activate uninterpreted data from parsed keywords.
-	 (dolist (entry (append (org-export-get-all-options backend)
-				org-export-options-alist))
-	   (pcase entry
-	     (`(,p ,_ ,_ ,_ parse)
-	      (let ((value (plist-get info p)))
-		(plist-put info
-			   p
-			   (org-export--remove-uninterpreted-data value info))))
-	     (_ nil)))
-	 ;; Install user's and developer's filters.
-	 (setq info (org-export-install-filters info))
-	 ;; Call options filters and update export options.  We do not
-	 ;; use `org-export-filter-apply-functions' here since the
-	 ;; arity of such filters is different.
-	 (let ((backend-name (org-export-backend-name backend)))
-	   (dolist (filter (plist-get info :filter-options))
-	     (let ((result (funcall filter info backend-name)))
-	       (when result (setq info result)))))
-	 ;; Parse buffer.
-	 (setq tree (org-element-parse-buffer nil visible-only))
-	 ;; Prune tree from non-exported elements and transform
-	 ;; uninterpreted elements or objects in both parse tree and
-	 ;; communication channel.
-	 (org-export--prune-tree tree info)
-	 (org-export--remove-uninterpreted-data tree info)
-	 ;; Call parse tree filters.
-	 (setq tree
-	       (org-export-filter-apply-functions
-		(plist-get info :filter-parse-tree) tree info))
-	 ;; Now tree is complete, compute its properties and add them
-	 ;; to communication channel.
-	 (setq info (org-export--collect-tree-properties tree info))
-         ;; Process citations and bibliography.  Replace each citation
-	 ;; and "print_bibliography" keyword in the parse tree with
-	 ;; the output of the selected citation export processor.
-         (org-cite-process-citations info)
-         (org-cite-process-bibliography info)
-	 ;; Eventually transcode TREE.  Wrap the resulting string into
-	 ;; a template.
-	 (let* ((body (org-element-normalize-string
-		       (or (org-export-data tree info) "")))
-		(inner-template (cdr (assq 'inner-template
-					   (plist-get info :translate-alist))))
-		(full-body (org-export-filter-apply-functions
-			    (plist-get info :filter-body)
-			    (if (not (functionp inner-template)) body
-			      (funcall inner-template body info))
-			    info))
-		(template (cdr (assq 'template
-				     (plist-get info :translate-alist))))
-                (output
-                 (if (or (not (functionp template)) body-only) full-body
-	           (funcall template full-body info))))
-           ;; Call citation export finalizer.
-           (setq output (org-cite-finalize-export output info))
-	   ;; Remove all text properties since they cannot be
-	   ;; retrieved from an external process.  Finally call
-	   ;; final-output filter and return result.
-	   (org-no-properties
-	    (org-export-filter-apply-functions
-	     (plist-get info :filter-final-output)
-	     output info))))))))
+	   (org-update-radio-target-regexp)
+           (setq modified-tick (buffer-chars-modified-tick))
+	   ;;  Possibly execute Babel code.  Re-run a macro expansion
+	   ;;  specifically for {{{results}}} since inline source blocks
+	   ;;  may have generated some more.  Refresh buffer properties
+	   ;;  and radio targets another time.
+	   (when org-export-use-babel
+	     (org-babel-exp-process-buffer)
+	     (org-macro-replace-all '(("results" . "$1")) parsed-keywords)
+             (unless (eq modified-tick (buffer-chars-modified-tick))
+	       (org-set-regexps-and-options)
+	       (org-update-radio-target-regexp))
+             (setq modified-tick (buffer-chars-modified-tick)))
+	   ;; Run last hook with current back-end's name as argument.
+	   ;; Update buffer properties and radio targets one last time
+	   ;; before parsing.
+	   (goto-char (point-min))
+	   (save-excursion
+	     (run-hook-with-args 'org-export-before-parsing-hook
+			         (org-export-backend-name backend)))
+           (unless (eq modified-tick (buffer-chars-modified-tick))
+	     (org-set-regexps-and-options)
+	     (org-update-radio-target-regexp))
+           (setq modified-tick (buffer-chars-modified-tick))
+	   ;; Update communication channel with environment.
+	   (setq info
+	         (org-combine-plists
+		  info (org-export-get-environment backend subtreep ext-plist)))
+           ;; Pre-process citations environment, i.e. install
+	   ;; bibliography list, and citation processor in INFO.
+	   (org-cite-store-bibliography info)
+           (org-cite-store-export-processor info)
+	   ;; De-activate uninterpreted data from parsed keywords.
+	   (dolist (entry (append (org-export-get-all-options backend)
+				  org-export-options-alist))
+	     (pcase entry
+	       (`(,p ,_ ,_ ,_ parse)
+	        (let ((value (plist-get info p)))
+		  (plist-put info
+			     p
+			     (org-export--remove-uninterpreted-data value info))))
+	       (_ nil)))
+	   ;; Install user's and developer's filters.
+	   (setq info (org-export-install-filters info))
+	   ;; Call options filters and update export options.  We do not
+	   ;; use `org-export-filter-apply-functions' here since the
+	   ;; arity of such filters is different.
+	   (let ((backend-name (org-export-backend-name backend)))
+	     (dolist (filter (plist-get info :filter-options))
+	       (let ((result (funcall filter info backend-name)))
+	         (when result (setq info result)))))
+	   ;; Parse buffer.
+	   (setq tree (org-element-parse-buffer nil visible-only))
+	   ;; Prune tree from non-exported elements and transform
+	   ;; uninterpreted elements or objects in both parse tree and
+	   ;; communication channel.
+	   (org-export--prune-tree tree info)
+	   (org-export--remove-uninterpreted-data tree info)
+	   ;; Call parse tree filters.
+	   (setq tree
+	         (org-export-filter-apply-functions
+		  (plist-get info :filter-parse-tree) tree info))
+	   ;; Now tree is complete, compute its properties and add them
+	   ;; to communication channel.
+	   (setq info (org-export--collect-tree-properties tree info))
+           ;; Process citations and bibliography.  Replace each citation
+	   ;; and "print_bibliography" keyword in the parse tree with
+	   ;; the output of the selected citation export processor.
+           (org-cite-process-citations info)
+           (org-cite-process-bibliography info)
+	   ;; Eventually transcode TREE.  Wrap the resulting string into
+	   ;; a template.
+	   (let* ((body (org-element-normalize-string
+		         (or (org-export-data tree info) "")))
+		  (inner-template (cdr (assq 'inner-template
+					     (plist-get info :translate-alist))))
+		  (full-body (org-export-filter-apply-functions
+			      (plist-get info :filter-body)
+			      (if (not (functionp inner-template)) body
+			        (funcall inner-template body info))
+			      info))
+		  (template (cdr (assq 'template
+				       (plist-get info :translate-alist))))
+                  (output
+                   (if (or (not (functionp template)) body-only) full-body
+	             (funcall template full-body info))))
+             ;; Call citation export finalizer.
+             (setq output (org-cite-finalize-export output info))
+	     ;; Remove all text properties since they cannot be
+	     ;; retrieved from an external process.  Finally call
+	     ;; final-output filter and return result.
+	     (org-no-properties
+	      (org-export-filter-apply-functions
+	       (plist-get info :filter-final-output)
+	       output info)))))))))
 
 ;;;###autoload
 (defun org-export-string-as (string backend &optional body-only ext-plist)
@@ -3229,15 +3239,18 @@ storing and resolving footnotes.  It is created automatically."
 				       value)
 			 (prog1
 			     (save-match-data
-			       (let ((matched (match-string 1 value)))
+			       (let ((matched (match-string 1 value))
+                                     stripped)
 				 (when (string-match "\\(::\\(.*?\\)\\)\"?\\'"
 						     matched)
 				   (setq location (match-string 2 matched))
 				   (setq matched
 					 (replace-match "" nil nil matched 1)))
-				 (expand-file-name (org-strip-quotes matched)
-						   dir)))
-			   (setq value (replace-match "" nil nil value)))))
+                                 (setq stripped (org-strip-quotes matched))
+                                 (if (org-url-p stripped)
+                                     stripped
+                                   (expand-file-name stripped dir))))
+                           (setq value (replace-match "" nil nil value)))))
 		   (only-contents
 		    (and (string-match ":only-contents *\\([^: \r\t\n]\\S-*\\)?"
 				       value)
@@ -3273,7 +3286,7 @@ storing and resolving footnotes.  It is created automatically."
 	      (delete-region (point) (line-beginning-position 2))
 	      (cond
 	       ((not file) nil)
-	       ((not (file-readable-p file))
+	       ((and (not (org-url-p file)) (not (file-readable-p file)))
 		(error "Cannot include file %s" file))
 	       ;; Check if files has already been parsed.  Look after
 	       ;; inclusion lines too, as different parts of the same
@@ -3319,8 +3332,9 @@ storing and resolving footnotes.  It is created automatically."
 			 includer-file)))
 		     (org-export-expand-include-keyword
 		      (cons (list file lines) included)
-		      (file-name-directory file)
-		      footnotes)
+                      (unless (org-url-p file)
+                        (file-name-directory file))
+                      footnotes)
 		     (buffer-string)))))
 		;; Expand footnotes after all files have been
 		;; included.  Footnotes are stored at end of buffer.
@@ -3343,7 +3357,7 @@ Org-Element.  If LINES is non-nil only those lines are included.
 Return a string of lines to be included in the format expected by
 `org-export--prepare-file-contents'."
   (with-temp-buffer
-    (insert-file-contents file)
+    (insert (org-file-contents file))
     (unless (eq major-mode 'org-mode)
       (let ((org-inhibit-startup t)) (org-mode)))
     (condition-case err
@@ -3448,7 +3462,7 @@ the included document.
 Optional argument INCLUDER is the file name where the inclusion
 is to happen."
   (with-temp-buffer
-    (insert-file-contents file)
+    (insert (org-file-contents file))
     (when lines
       (let* ((lines (split-string lines "-"))
 	     (lbeg (string-to-number (car lines)))
@@ -3754,28 +3768,33 @@ definition can be found, raise an error."
     (if (not label) (org-element-contents footnote-reference)
       (let ((cache (or (plist-get info :footnote-definition-cache)
 		       (let ((hash (make-hash-table :test #'equal)))
+                         ;; Cache all the footnotes in document for
+                         ;; later search.
+                         (org-element-map (plist-get info :parse-tree)
+                             '(footnote-definition footnote-reference)
+                           (lambda (f)
+		             ;; Skip any standard footnote reference
+		             ;; since those cannot contain a
+		             ;; definition.
+                             (unless (eq (org-element-property :type f) 'standard)
+                               (puthash
+                                (cons :element (org-element-property :label f))
+                                f
+                                hash)))
+                           info)
 			 (plist-put info :footnote-definition-cache hash)
 			 hash))))
 	(or
 	 (gethash label cache)
 	 (puthash label
-		  (org-element-map (plist-get info :parse-tree)
-		      '(footnote-definition footnote-reference)
-		    (lambda (f)
-		      (cond
-		       ;; Skip any footnote with a different label.
-		       ;; Also skip any standard footnote reference
-		       ;; with the same label since those cannot
-		       ;; contain a definition.
-		       ((not (equal (org-element-property :label f) label)) nil)
-		       ((eq (org-element-property :type f) 'standard) nil)
-		       ((org-element-contents f))
-		       ;; Even if the contents are empty, we can not
-		       ;; return nil since that would eventually raise
-		       ;; the error.  Instead, return the equivalent
-		       ;; empty string.
-		       (t "")))
-		    info t)
+                  (let ((hashed (gethash (cons :element label) cache)))
+                    (when hashed
+                      (or (org-element-contents hashed)
+		          ;; Even if the contents are empty, we can not
+		          ;; return nil since that would eventually raise
+		          ;; the error.  Instead, return the equivalent
+		          ;; empty string.
+                          "")))
 		  cache)
 	 (error "Definition not found for footnote %s" label))))))
 
@@ -4132,7 +4151,7 @@ meant to be translated with `org-export-data' or alike."
 ;; `org-export-data' for further processing, depending on
 ;; `org-export-with-broken-links' value.
 
-(org-define-error 'org-link-broken "Unable to resolve link; aborting")
+(define-error 'org-link-broken "Unable to resolve link; aborting")
 
 (defun org-export-custom-protocol-maybe (link desc backend &optional info)
   "Try exporting LINK object with a dedicated function.
@@ -4347,17 +4366,27 @@ significant."
   (let* ((search-cells (org-export-string-to-search-cell
 			(org-element-property :path link)))
 	 (link-cache (or (plist-get info :resolve-fuzzy-link-cache)
-			 (let ((table (make-hash-table :test #'eq)))
+			 (let ((table (make-hash-table :test #'equal)))
+                           ;; Cache all the element search cells.
+                           (org-element-map (plist-get info :parse-tree)
+		               (append pseudo-types '(target) org-element-all-elements)
+	                     (lambda (datum)
+		               (dolist (cell (org-export-search-cells datum))
+		                 (if (gethash cell table)
+                                     (push datum (gethash cell table))
+                                   (puthash cell (list datum) table)))))
 			   (plist-put info :resolve-fuzzy-link-cache table)
 			   table)))
 	 (cached (gethash search-cells link-cache 'not-found)))
     (if (not (eq cached 'not-found)) cached
       (let ((matches
-	     (org-element-map (plist-get info :parse-tree)
-		 (append pseudo-types '(target) org-element-all-elements)
-	       (lambda (datum)
-		 (and (org-export-match-search-cell-p datum search-cells)
-		      datum)))))
+             (let (result)
+               (dolist (search-cell search-cells)
+                 (setq result
+                       (nconc
+                        result
+	                (gethash search-cell link-cache))))
+               (delq nil result))))
 	(unless matches
 	  (signal 'org-link-broken (list (org-element-property :path link))))
 	(puthash
@@ -4384,15 +4413,27 @@ tree or a file name.  Assume LINK type is either \"id\" or
 \"custom-id\".  Throw an error if no match is found."
   (let ((id (org-element-property :path link)))
     ;; First check if id is within the current parse tree.
-    (or (org-element-map (plist-get info :parse-tree) 'headline
-	  (lambda (headline)
-	    (when (or (equal (org-element-property :ID headline) id)
-		      (equal (org-element-property :CUSTOM_ID headline) id))
-	      headline))
-	  info 'first-match)
-	;; Otherwise, look for external files.
-	(cdr (assoc id (plist-get info :id-alist)))
-	(signal 'org-link-broken (list id)))))
+    (or (let ((local-ids (or (plist-get info :id-local-cache)
+                             (let ((table (make-hash-table :test #'equal)))
+                               (org-element-map
+                                   (plist-get info :parse-tree)
+                                   'headline
+                                 (lambda (headline)
+                                   (let ((id (org-element-property :ID headline))
+                                         (custom-id (org-element-property :CUSTOM_ID headline)))
+                                     (when id
+                                       (unless (gethash id table)
+                                         (puthash id headline table)))
+                                     (when custom-id
+                                       (unless (gethash custom-id table)
+                                         (puthash custom-id headline table)))))
+                                 info)
+                               (plist-put info :id-local-cache table)
+                               table))))
+          (gethash id local-ids))
+        ;; Otherwise, look for external files.
+        (cdr (assoc id (plist-get info :id-alist)))
+        (signal 'org-link-broken (list id)))))
 
 (defun org-export-resolve-radio-link (link info)
   "Return radio-target object referenced as LINK destination.

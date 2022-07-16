@@ -765,7 +765,48 @@
 	      (push-mark (point) t t)
 	      (goto-char (point-max))
 	      (call-interactively #'org-fill-paragraph)
+	      (buffer-string)))))
+  ;; Fill every list item in a region
+  (should
+   (equal "\n- 2345678\n  9\n- 2345678\n  9"
+	  (org-test-with-temp-text "\n- 2345678 9\n- 2345678 9"
+	    (let ((fill-column 10))
+	      (transient-mark-mode 1)
+	      (push-mark (point-min) t t)
+	      (goto-char (point-max))
+	      (call-interactively #'org-fill-paragraph)
+	      (buffer-string)))))
+  (should
+   (equal "\n- 2345678\n  9\n- 2345678"
+	  (org-test-with-temp-text "\n- 2345678 9\n- 2345678"
+	    (let ((fill-column 10))
+	      (transient-mark-mode 1)
+	      (push-mark (point-min) t t)
+	      (goto-char (point-max))
+	      (call-interactively #'org-fill-paragraph)
 	      (buffer-string))))))
+
+(ert-deftest test-org/fill-region ()
+  "Test `fill-region' behaviour."
+  ;; fill-region should fill every item of a list
+  (should
+   (equal "\n- 2345678\n  9\n- 2345678\n  9"
+	  (org-test-with-temp-text "\n- 2345678 9\n- 2345678 9"
+	                           (let ((fill-column 10))
+	                             (transient-mark-mode 1)
+	                             (push-mark (point-min) t t)
+	                             (goto-char (point-max))
+	                             (call-interactively #'fill-region)
+	                             (buffer-string)))))
+  (should
+   (equal "\n- 1 2\n- 1 2"
+	  (org-test-with-temp-text "\n- 1\n  2\n- 1\n  2"
+	                           (let ((fill-column 10))
+	                             (transient-mark-mode 1)
+	                             (push-mark (point-min) t t)
+	                             (goto-char (point-max))
+	                             (call-interactively #'fill-region)
+	                             (buffer-string)))))  )
 
 (ert-deftest test-org/auto-fill-function ()
   "Test auto-filling features."
@@ -2914,6 +2955,18 @@ Foo Bar
      (org-update-radio-target-regexp)
      (org-open-at-point)
      (eq (org-element-type (org-element-context)) 'radio-target))))
+
+(ert-deftest test-org/open-at-point/radio-target-shadowed ()
+  "Test `org-open-at-point' on shadowed radio targets."
+  (should
+   (org-test-with-temp-text
+       "<<<target shadowed>>> <<<target>>> <point>target shadowed"
+     (org-update-radio-target-regexp)
+     (org-open-at-point)
+     (string=
+      (org-element-property :value
+                            (org-element-radio-target-parser))
+      "target shadowed"))))
 
 (ert-deftest test-org/open-at-point/tag ()
   "Test `org-open-at-point' on tags."
@@ -7740,6 +7793,26 @@ CLOSED: %s
         (when (memq 'org-add-log-note post-command-hook)
           (org-add-log-note))
         (buffer-string))))))
+
+(ert-deftest test-org/org-todo-prefix ()
+  "Test `org-todo' prefix arg behavior."
+  ;; FIXME: Add tests for all other allowed prefix arguments.
+  ;; -1 prefix arg should cancel repeater and mark DONE.
+  (should
+   (string-match-p
+    "DONE H\\(.*\n\\)*<2012-03-29 Thu \\+0y>"
+    (let ((org-todo-keywords '((sequence "TODO" "DONE"))))
+      (org-test-with-temp-text "* TODO H\n<2012-03-29 Thu +2y>"
+	(org-todo -1)
+	(buffer-string)))))
+  ;; - prefix arg should cancel repeater and mark DONE.
+  (should
+   (string-match-p
+    "DONE H\\(.*\n\\)*<2012-03-29 Thu \\+0y>"
+    (let ((org-todo-keywords '((sequence "TODO" "DONE"))))
+      (org-test-with-temp-text "* TODO H\n<2012-03-29 Thu +2y>"
+	(org-todo '-)
+	(buffer-string))))))
 
 
 ;;; Timestamps API
