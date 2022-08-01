@@ -872,8 +872,12 @@ This option can also be set with the OPTIONS keyword, e.g.,
 
 This variable allows providing shortcuts for export snippets.
 
-For example, with a value of \\='((\"h\" . \"html\")), the
-HTML back-end will recognize the contents of \"@@h:<b>@@\" as
+For example, with:
+
+  (setq org-export-snippet-translation-alist
+        \\='((\"h\" . \"html\")))
+
+the HTML back-end will recognize the contents of \"@@h:<b>@@\" as
 HTML code while every other back-end will ignore it."
   :group 'org-export-general
   :version "24.4"
@@ -1182,7 +1186,7 @@ keywords are understood:
     Menu entry for the export dispatcher.  It should be a list
     like:
 
-      \\='(KEY DESCRIPTION-OR-ORDINAL ACTION-OR-MENU)
+      (KEY DESCRIPTION-OR-ORDINAL ACTION-OR-MENU)
 
     where :
 
@@ -1206,17 +1210,17 @@ keywords are understood:
       If it is an alist, associations should follow the
       pattern:
 
-        \\='(KEY DESCRIPTION ACTION)
+        (KEY DESCRIPTION ACTION)
 
       where KEY, DESCRIPTION and ACTION are described above.
 
     Valid values include:
 
-      \\='(?m \"My Special Back-end\" my-special-export-function)
+      (?m \"My Special Back-end\" my-special-export-function)
 
       or
 
-      \\='(?l \"Export to LaTeX\"
+       (?l \"Export to LaTeX\"
            ((?p \"As PDF file\" org-latex-export-to-pdf)
             (?o \"As PDF file and open\"
                 (lambda (a s v b)
@@ -1227,7 +1231,7 @@ keywords are understood:
       or the following, which will be added to the previous
       sub-menu,
 
-      \\='(?l 1
+       (?l 1
           ((?B \"As TEX buffer (Beamer)\" org-beamer-export-as-latex)
            (?P \"As PDF file (Beamer)\" org-beamer-export-to-pdf)))
 
@@ -1912,8 +1916,10 @@ Return a string."
 			   (org-element-property :archivedp data)))
 		  (let ((transcoder (org-export-transcoder data info)))
 		    (or (and (functionp transcoder)
-			     (broken-link-handler
-			      (funcall transcoder data nil info)))
+                             (if (eq type 'link)
+			         (broken-link-handler
+			          (funcall transcoder data nil info))
+                               (funcall transcoder data nil info)))
 			;; Export snippets never return a nil value so
 			;; that white spaces following them are never
 			;; ignored.
@@ -4518,6 +4524,7 @@ Return value can be an object or an element:
         (org-persist-register location-type path
                               :write-immediately t))))
 
+(require 'subr-x) ;; FIXME: For `thread-first' in Emacs 26.
 (defun org-export-link-localise (link)
   "Convert remote LINK to local link.
 If LINK refers to a remote resource, modify it to point to a local

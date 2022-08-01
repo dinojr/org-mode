@@ -486,7 +486,9 @@ DIR-property exists (that is different from the unset one)."
 (defun org-attach-url (url)
   "Attach URL."
   (interactive "MURL of the file to attach: \n")
-  (let ((org-attach-method 'url))
+  (let ((org-attach-method 'url)
+        (org-safe-remote-resources ; Assume saftey if in an interactive session.
+         (if noninteractive org-safe-remote-resources '(""))))
     (org-attach-attach url)))
 
 (defun org-attach-buffer (buffer-name)
@@ -518,16 +520,24 @@ METHOD may be `cp', `mv', `ln', `lns' or `url' default taken from
     current-prefix-arg
     nil))
   (setq method (or method org-attach-method))
+  (when (file-directory-p file)
+    (setq file (directory-file-name file)))
   (let ((basename (file-name-nondirectory file)))
     (let* ((attach-dir (org-attach-dir 'get-create))
            (attach-file (expand-file-name basename attach-dir)))
       (cond
        ((eq method 'mv) (rename-file file attach-file))
-       ((eq method 'cp) (copy-file file attach-file))
+       ((eq method 'cp)
+        (if (file-directory-p file)
+            (copy-directory file attach-file nil nil t)
+          (copy-file file attach-file)))
        ((eq method 'ln) (add-name-to-file file attach-file))
-       ;; We pass integer third argument to auto-expand "~" in FILE.
        ((eq method 'lns) (make-symbolic-link file attach-file 1))
-       ((eq method 'url) (url-copy-file file attach-file)))
+       ((eq method 'url)
+        (if (org--should-fetch-remote-resource-p file)
+            (url-copy-file file attach-file)
+          (error "The remote resource %S is considered unsafe, and will not be downloaded."
+                 file))))
       (run-hook-with-args 'org-attach-after-change-hook attach-dir)
       (org-attach-tag)
       (cond ((eq org-attach-store-link-p 'attached)

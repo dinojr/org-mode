@@ -961,7 +961,7 @@ characters that should be escaped."
 
 (defun org-link-decode (s)
   "Decode percent-encoded parts in string S.
-E.g. \"%C3%B6\" becomes the german o-Umlaut."
+E.g. \"%C3%B6\" becomes the German o-Umlaut."
   (replace-regexp-in-string "\\(%[0-9A-Za-z]\\{2\\}\\)+"
 			    #'org-link--decode-compound s t t))
 
@@ -1618,9 +1618,7 @@ non-nil."
 	  (setq link
 		(format-time-string
 		 (car org-time-stamp-formats)
-		 (apply 'encode-time
-			(list 0 0 0 (nth 1 cd) (nth 0 cd) (nth 2 cd)
-			      nil nil nil))))
+		 (org-encode-time 0 0 0 (nth 1 cd) (nth 0 cd) (nth 2 cd))))
 	  (org-link-store-props :type "calendar" :date cd)))
 
        ((eq major-mode 'w3-mode)

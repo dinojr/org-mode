@@ -560,7 +560,8 @@ For example, if you have a capture template \"c\" and you want
 this template to be accessible only from `message-mode' buffers,
 use this:
 
-   \\='((\"c\" ((in-mode . \"message-mode\"))))
+  (setq org-capture-templates-contexts
+        \\='((\"c\" ((in-mode . \"message-mode\")))))
 
 Here are the available contexts definitions:
 
@@ -578,7 +579,8 @@ accessible if there is at least one valid check.
 You can also bind a key to another capture template depending on
 contextual rules.
 
-    \\='((\"c\" \"d\" ((in-mode . \"message-mode\"))))
+  (setq org-capture-templates-contexts
+        \\='((\"c\" \"d\" ((in-mode . \"message-mode\")))))
 
 Here it means: in `message-mode buffers', use \"c\" as the
 key for the capture template otherwise associated with \"d\".
@@ -1052,9 +1054,10 @@ Store them in the capture property list."
                       prompt-time
                     ;; Use 00:00 when no time is given for another
                     ;; date than today?
-                    (apply #'encode-time 0 0
-                           org-extend-today-until
-                           (cl-cdddr (decode-time prompt-time)))))
+                    (org-encode-time
+                     (apply #'list
+                            0 0 org-extend-today-until
+                            (cl-cdddr (decode-time prompt-time))))))
 		 (time-to-days prompt-time)))
 	      (t
 	       ;; Current date, possibly corrected for late night
@@ -1177,7 +1180,7 @@ may have been stored before."
         ;; Make sure that last point is not folded.
         (org-fold-core-cycle-over-indirect-buffers
           (org-fold-region (max 1 (1- (point-max))) (point-max) nil))))
-    (let ((origin (point)))
+    (let ((origin (point-marker)))
       (unless (bolp) (insert "\n"))
       (org-capture-empty-lines-before)
       (let ((beg (point)))
@@ -1242,7 +1245,7 @@ may have been stored before."
 				     (point))
 				   beg)))))))
     ;; Insert template.
-    (let ((origin (point)))
+    (let ((origin (point-marker)))
       (unless (bolp) (insert "\n"))
       ;; When a new list is created, always obey to `:empty-lines' and
       ;; friends.
@@ -1343,7 +1346,7 @@ may have been stored before."
       ;; No table found.  Create it with an empty header.
       (goto-char end)
       (unless (bolp) (insert "\n"))
-      (let ((origin (point)))
+      (let ((origin (point-marker)))
 	(insert "|   |\n|---|\n")
 	(narrow-to-region origin (point))))
     ;; In the current table, find the appropriate location for TEXT.
@@ -1372,7 +1375,7 @@ may have been stored before."
      (t
       (goto-char (org-table-end))))
     ;; Insert text and position point according to template.
-    (let ((origin (point)))
+    (let ((origin (point-marker)))
       (unless (bolp) (insert "\n"))
       (let ((beg (point))
 	    (end (save-excursion
@@ -1404,7 +1407,7 @@ Of course, if exact position has been required, just put it there."
    (t
     ;; Beginning or end of file.
     (goto-char (if (org-capture-get :prepend) (point-min) (point-max)))))
-  (let ((origin (point)))
+  (let ((origin (point-marker)))
     (unless (bolp) (insert "\n"))
     (org-capture-empty-lines-before)
     (org-capture-position-for-last-stored (point))
@@ -1583,7 +1586,7 @@ Expansion occurs in a temporary Org mode buffer."
 	 (time (let* ((c (or (org-capture-get :default-time) (current-time)))
 		      (d (decode-time c)))
 		 (if (< (nth 2 d) org-extend-today-until)
-		     (encode-time 0 59 23 (1- (nth 3 d)) (nth 4 d) (nth 5 d))
+		     (org-encode-time 0 59 23 (1- (nth 3 d)) (nth 4 d) (nth 5 d))
 		   c)))
 	 (v-t (format-time-string (org-time-stamp-format nil) time))
 	 (v-T (format-time-string (org-time-stamp-format t) time))

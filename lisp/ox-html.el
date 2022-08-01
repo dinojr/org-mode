@@ -2873,11 +2873,12 @@ INFO is a plist containing export properties."
 	;; temporary buffer so that dvipng/imagemagick can properly
 	;; turn the fragment into an image.
 	(setq latex-frag (concat latex-header latex-frag))))
-    (with-temp-buffer
-      (insert latex-frag)
-      (org-format-latex cache-relpath nil nil cache-dir nil
-			"Creating LaTeX Image..." nil processing-type)
-      (buffer-string))))
+    (org-export-with-buffer-copy
+     (erase-buffer)
+     (insert latex-frag)
+     (org-format-latex cache-relpath nil nil cache-dir nil
+		       "Creating LaTeX Image..." nil processing-type)
+     (buffer-string))))
 
 (defun org-html--wrap-latex-environment (contents _ &optional caption label)
   "Wrap CONTENTS string within appropriate environment for equations.
@@ -2910,7 +2911,7 @@ Starred and \"displaymath\" environments are not numbered."
 
 (defun org-html--unlabel-latex-environment (latex-frag)
   "Change environment in LATEX-FRAG string to an unnumbered one.
-For instance, change an \\='equation\\=' environment to \\='equation*\\='."
+For instance, change an `equation' environment to `equation*'."
   (replace-regexp-in-string
    "\\`[ \t]*\\\\begin{\\([^*]+?\\)}"
    "\\1*"

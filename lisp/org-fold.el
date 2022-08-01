@@ -223,9 +223,11 @@ smart            Make point visible, and do insertion/deletion if it is
       (:isearch-open . t)
       ;; This is needed to make sure that inserting a
       ;; new planning line in folded heading is not
-      ;; revealed.
+      ;; revealed.  Also, the below combination of :font-sticky and
+      ;; :real-sticky conforms to the overlay properties in outline.el
+      ;; and the older Org versions as in `outline-flag-region'.
       (:front-sticky . t)
-      (:rear-sticky . t)
+      (:rear-sticky . nil)
       (:font-lock-skip . t)
       (:alias . (headline heading outline inlinetask plain-list)))
      (org-fold-block
@@ -517,7 +519,7 @@ of the current heading, or to 1 if the current line is not a heading."
       (if (and (bolp) (not (bobp)) (outline-invisible-p (1- (point))))
           (org-fold-region (max (point-min) (1- (point))) (point) nil)))))
 
-(defun org-fold-show-entry ()
+(defun org-fold-show-entry (&optional hide-drawers)
   "Show the body directly following its heading.
 Show the heading too, if it is currently invisible."
   (interactive)
@@ -532,7 +534,7 @@ Show the heading too, if it is currently invisible."
  	 (point-max)))
      nil
      'outline)
-    (org-cycle-hide-drawers 'children)))
+    (when hide-drawers (org-cycle-hide-drawers 'children))))
 
 (defalias 'org-fold-show-hidden-entry #'org-fold-show-entry
   "Show an entry where even the heading is hidden.")

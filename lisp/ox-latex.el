@@ -172,144 +172,111 @@
 
 ;;; Internal Variables
 
-(defconst org-latex-babel-language-alist
-  '(("af" . "afrikaans")
-    ("bg" . "bulgarian")
-    ("ca" . "catalan")
-    ("cs" . "czech")
-    ("cy" . "welsh")
-    ("da" . "danish")
-    ("de" . "germanb")
-    ("de-at" . "naustrian")
-    ("de-de" . "ngerman")
-    ("el" . "greek")
-    ("en" . "english")
-    ("en-au" . "australian")
-    ("en-ca" . "canadian")
-    ("en-gb" . "british")
-    ("en-ie" . "irish")
-    ("en-nz" . "newzealand")
-    ("en-us" . "american")
-    ("es" . "spanish")
-    ("et" . "estonian")
-    ("eu" . "basque")
-    ("fi" . "finnish")
-    ("fr" . "french")
-    ("fr-ca" . "canadien")
-    ("gl" . "galician")
-    ("hr" . "croatian")
-    ("hu" . "hungarian")
-    ("id" . "indonesian")
-    ("is" . "icelandic")
-    ("it" . "italian")
-    ("la" . "latin")
-    ("ms" . "malay")
-    ("nl" . "dutch")
-    ("nb" . "norsk")
-    ("nn" . "nynorsk")
-    ("no" . "norsk")
-    ("pl" . "polish")
-    ("pt" . "portuguese")
-    ("pt-br" . "brazilian")
-    ("ro" . "romanian")
-    ("ru" . "russian")
-    ("sa" . "sanskrit")
-    ("sb" . "uppersorbian")
-    ("sk" . "slovak")
-    ("sl" . "slovene")
-    ("sq" . "albanian")
-    ("sr" . "serbian")
-    ("sv" . "swedish")
-    ("ta" . "tamil")
-    ("tr" . "turkish")
-    ("uk" . "ukrainian"))
-  "Alist between language code and corresponding Babel option.")
-
-(defconst org-latex-polyglossia-language-alist
-  '(("am" "amharic")
+(defconst org-latex-language-alist
+  ;; TODO: replace this list with a property list (the actual
+  ;; implementation is not very robust).
+  '(("am" "amharic" "*")
     ("ar" "arabic")
-    ("ast" "asturian")
+    ("ast" "asturian" "*")
     ("bg" "bulgarian")
-    ("bn" "bengali")
-    ("bo" "tibetan")
+    ("bn" "bengali" "*")
+    ("bo" "tibetan" "*")
     ("br" "breton")
     ("ca" "catalan")
-    ("cop" "coptic")
+    ("cop" "coptic" "*")
     ("cs" "czech")
     ("cy" "welsh")
     ("da" "danish")
-    ("de" "german" "german")
-    ("de-at" "german" "austrian")
-    ("de-de" "german" "german")
-    ("dsb" "lsorbian")
-    ("dv" "divehi")
+    ("de" "ngerman" "german" "german")
+    ("de-at" "naustrian" "german" "austrian")
+    ("dsb" "lsorbian" "*")
+    ("dv" "divehi" "*")
     ("el" "greek")
-    ("en" "english" "usmax")
-    ("en-au" "english" "australian")
-    ("en-gb" "english" "uk")
-    ("en-nz" "english" "newzealand")
-    ("en-us" "english" "usmax")
+    ("el-polyton" "polutonikogreek" "greek" "polytonic")
+    ("en" "american" "english" "usmax")
+    ("en-au" "australian" "english" "australian")
+    ("en-gb" "british" "english" "uk")
+    ("en-nz" "newzealand" "english" "newzealand")
+    ("en-us" "american" "english" "usmax")
     ("eo" "esperanto")
     ("es" "spanish")
+    ("es-mx" "spanishmx" "spanish" "mexican")
     ("et" "estonian")
     ("eu" "basque")
     ("fa" "farsi")
     ("fi" "finnish")
     ("fr" "french")
-    ("fu" "friulan")
+    ("fr-ca" "canadien" "french" "canadian")
+    ("fur" "friulan")
     ("ga" "irish")
     ("gd" "scottish")
     ("gl" "galician")
     ("he" "hebrew")
     ("hi" "hindi")
     ("hr" "croatian")
-    ("hsb" "usorbian")
+    ("hsb" "uppersorbian" "sorbian" "upper")
     ("hu" "magyar")
-    ("hy" "armenian")
+    ("hy" "armenian" "*")
     ("ia" "interlingua")
-    ("id" "bahasai")
+    ("id" "bahasai" "*")
     ("is" "icelandic")
     ("it" "italian")
-    ("kn" "kannada")
-    ("la" "latin" "modern")
-    ("la-classic" "latin" "classic")
-    ("la-medieval" "latin" "medieval")
-    ("la-modern" "latin" "modern")
-    ("lo" "lao")
+    ("kn" "kannada" "*")
+    ("la" "latin")
+    ("la-classic" "classiclatin" "latin" "classic")
+    ("la-medieval" "medievallatin" "latin" "medieval")
+    ("la-ecclesiastic" "ecclesiasticlatin" "latin" "ecclesiastic")
+    ("lo" "lao" "*")
     ("lt" "lithuanian")
     ("lv" "latvian")
-    ("ml" "malayalam")
-    ("mr" "maranthi")
-    ("nb" "norsk")
-    ("nko" "nko")
+    ("ml" "malayalam" "*")
+    ("mr" "maranthi" "*")
+    ("nb" "norsk" "norwegian" "bokmal")
     ("nl" "dutch")
-    ("nn" "nynorsk")
+    ("nn" "nynorsk" "norwegian" "nynorsk")
     ("no" "norsk")
     ("oc" "occitan")
     ("pl" "polish")
     ("pms" "piedmontese")
     ("pt" "portuges")
     ("pt-br" "brazilian")
-    ("rm" "romansh")
+    ("rm" "romansh" "*")
     ("ro" "romanian")
     ("ru" "russian")
-    ("sa" "sanskrit")
-    ("se" "samin")
+    ("sa" "sanskrit" "*")
     ("sk" "slovak")
-    ("sl" "slovenian")
+    ("sl" "slovene")
     ("sq" "albanian")
     ("sr" "serbian")
     ("sv" "swedish")
-    ("syr" "syriac")
-    ("ta" "tamil")
-    ("te" "telugu")
+    ("syr" "syriac" "*")
+    ("ta" "tamil" "*")
+    ("te" "telugu" "*")
     ("th" "thai")
     ("tk" "turkmen")
     ("tr" "turkish")
     ("uk" "ukrainian")
-    ("ur" "urdu")
+    ("ur" "urdu" "*")
     ("vi" "vietnamese"))
-  "Alist between language code and corresponding Polyglossia option.")
+  "Alist between language code and corresponding Babel/Polyglossia option.
+
+For the names of the languages, the Babel nomenclature is
+preferred to that of Polyglossia, in those cases where both
+coincide.
+
+The alist supports three types of members:
+
+- Members with two elements: CODE BABEL/POLYGLOSSIA OPTION.
+
+- Members with three elements: CODE BABEL/POLYGLOSSIA OPTION
+ASTERISK (the presence of the asterisk indicates that this
+language is not loaded in Babel using the old method of ldf
+files but using ini files.  If Babel is loaded in an Org
+document with these languages, the \"AUTO \" argument is just
+removed, to avoid compilation errors).
+
+- Members with four elements (for variants of languages): CODE
+BABEL-OPTION POLYGLOSSIA-OPTION POLYGLOSSIA-VARIANT")
 
 (defconst org-latex-table-matrix-macros '(("bordermatrix" . "\\cr")
 					  ("qbordermatrix" . "\\cr")
@@ -1432,6 +1399,9 @@ A better approach is to use a compiler suit such as `latexmk'."
       "%latex -interaction nonstopmode -output-directory %o %f"))
   "Commands to process a LaTeX file to a PDF file.
 
+The command output will be parsed to extract compilation errors and
+warnings according to `org-latex-known-warnings'.
+
 This is a list of strings, each of them will be given to the
 shell as a command.  %f in the command will be replaced by the
 relative file name, %F by the absolute file name, %b by the file
@@ -1644,31 +1614,54 @@ Insertion of guessed language only happens when Babel package has
 explicitly been loaded.  Then it is added to the rest of
 package's options.
 
-The argument to Babel may be \"AUTO\" which is then replaced with
-the language of the document or `org-export-default-language'
-unless language in question is already loaded.
+The optional argument to Babel or the mandatory argument to
+`\babelprovide' command may be \"AUTO\" which is then replaced
+with the language of the document or
+`org-export-default-language' unless language in question is
+already loaded.
 
 Return the new header."
-  (let ((language-code (plist-get info :language)))
-    ;; If no language is set or Babel package is not loaded, return
-    ;; HEADER as-is.
-    (if (or (not (stringp language-code))
-	    (not (string-match "\\\\usepackage\\[\\(.*\\)\\]{babel}" header)))
+  (let* ((language-code (plist-get info :language))
+	 (language (nth 1 (assoc language-code
+				 org-latex-language-alist)))
+	 ;; If no language is set or Babel package is not loaded, return
+ 	 ;; HEADER as-is.
+	 (header (if (or (not (stringp language-code))
+			 (not (string-match "\\\\usepackage\\[\\(.*\\)\\]{babel}" header)))
+		     header
+		   (let ((options (save-match-data
+				    (org-split-string (match-string 1 header) ",[ \t]*"))))
+		     ;; If LANGUAGE is already loaded, return header
+		     ;; without AUTO.  Otherwise, replace AUTO with language or
+		     ;; append language if AUTO is not present.  Languages that are
+		     ;; served in Babel exclusively through ini files are not added
+		     ;; to the babel argument, and must be loaded using
+		     ;; `\babelprovide'.
+		     (let ((l (assoc language-code org-latex-language-alist)))
+                       ;; Three elements imply that LANGUAGE is served
+                       ;; in Babel only by means of an ini file.
+                       ;; Therefore it will not be added to the Babel
+                       ;; argument.  TODO: this should be improved
+                       ;; when `org-latex-language-alist' is replaced
+                       ;; by a more robust list.
+		       (if (and (consp l) (= (length l) 3))
+                           header
+			 (replace-match
+			  (mapconcat (lambda (option) (if (equal "AUTO" option) language option))
+				     (cond ((member language options) (delete "AUTO" options))
+					   ((member "AUTO" options) options)
+					   (t (append options (list language))))
+				     ", ")
+			  t nil header 1)))))))
+    ;; If `\babelprovide[args]{AUTO}' is present, AUTO is
+    ;; replaced by LANGUAGE.
+    (if (not (string-match "\\\\babelprovide\\[.*\\]{\\(.+\\)}" header))
 	header
-      (let ((options (save-match-data
-		       (org-split-string (match-string 1 header) ",[ \t]*")))
-	    (language (cdr (assoc-string language-code
-					 org-latex-babel-language-alist t))))
-	;; If LANGUAGE is already loaded, return header without AUTO.
-	;; Otherwise, replace AUTO with language or append language if
-	;; AUTO is not present.
-	(replace-match
-	 (mapconcat (lambda (option) (if (equal "AUTO" option) language option))
-		    (cond ((member language options) (delete "AUTO" options))
-			  ((member "AUTO" options) options)
-			  (t (append options (list language))))
-		    ", ")
-	 t nil header 1)))))
+      (let ((prov (match-string 1 header)))
+	(when (equal "AUTO" prov)
+	  (replace-regexp-in-string (format
+				     "\\(\\\\babelprovide\\[.*\\]\\)\\({\\)%s}" prov)
+				    (format "\\1\\2%s}" language) header t))))))
 
 (defun org-latex-guess-polyglossia-language (header info)
   "Set the Polyglossia language according to the LANGUAGE keyword.
@@ -1690,8 +1683,8 @@ Return the new header."
     ;; HEADER as-is.
     (if (or (not (stringp language))
 	    (not (string-match
-		  "\\\\usepackage\\(?:\\[\\([^]]+?\\)\\]\\){polyglossia}\n"
-		  header)))
+		"\\\\usepackage\\(?:\\[\\([^]]+?\\)\\]\\){polyglossia}\n"
+		header)))
 	header
       (let* ((options (org-string-nw-p (match-string 1 header)))
 	     (languages (and options
@@ -1710,15 +1703,23 @@ Return the new header."
 	 (concat "\\usepackage{polyglossia}\n"
 		 (mapconcat
 		  (lambda (l)
-		    (let ((l (or (assoc l org-latex-polyglossia-language-alist)
+		    (let ((l (or (assoc l org-latex-language-alist)
 				 l)))
 		      (format (if main-language-set "\\setotherlanguage%s{%s}\n"
 				(setq main-language-set t)
 				"\\setmainlanguage%s{%s}\n")
-			      (if (and (consp l) (= (length l) 3))
-				  (format "[variant=%s]" (nth 2 l))
+                              ;; Four elements implies that there is a
+                              ;; variant (4) for LANGUAGE when
+                              ;; declared by Polyglossia (3).
+                              ;; FIXME: This should be improved when
+                              ;; `org-latex-language-alist' is
+                              ;; replaced by a more robust list.
+                              (if (and (consp l) (= (length l) 4))
+				  (format "[variant=%s]" (nth 3 l))
 				"")
-			      (nth 1 l))))
+			      (if (and (consp l) (= (length l) 4))
+				  (nth 2 l)
+				(nth 1 l)))))
 		  languages
 		  ""))
 	 t t header 0)))))
@@ -1863,8 +1864,11 @@ INFO is a plist used as a communication channel."
   "Create a format-spec for document meta-data.
 INFO is a plist used as a communication channel."
   (let ((language (let ((lang (plist-get info :language)))
-		    (or (cdr (assoc-string lang org-latex-babel-language-alist t))
-			(nth 1 (assoc-string lang org-latex-polyglossia-language-alist t))
+                    ;; The second element in
+                    ;; `org-latex-language-alist' is always the
+                    ;; language name, regardless of the type of the
+                    ;; alist entry.
+                    (or (nth 1 (assoc-string lang org-latex-language-alist t))
 			lang))))
     `((?a . ,(org-export-data (plist-get info :author) info))
       (?t . ,(org-export-data (plist-get info :title) info))
@@ -2767,7 +2771,12 @@ used as a communication channel."
 			  ((string-prefix-p "," options)
 			   (format "[%s]" (substring options 1)))
 			  (t (format "[%s]" options)))
-		    path))
+                    ;; While \includegraphics is fine with unicode in the path,
+                    ;; \includesvg is prone to producing errors.
+                    (if (and (string-match-p "[^[:ascii:]]" path)
+                             (equal filetype "svg"))
+                        (concat "\\detokenize{" path "}")
+                      path)))
       (when (equal filetype "svg")
 	(setq image-code (replace-regexp-in-string "^\\\\includegraphics"
 						   "\\includesvg"
@@ -3422,10 +3431,10 @@ and FLOAT are extracted from SRC-BLOCK and INFO in `org-latex-src-block'."
                          (equal '("false") (cdr opt)))
                      'no)))))
             opts))))
-    (if-let ((mathescape (or (funcall mathescape-status default-options)
-                             (funcall mathescape-status options))))
-        (when (eq mathescape 'yes)
-          (or engrave-faces-latex-mathescape t)))))
+    (let ((mathescape (or (funcall mathescape-status default-options)
+                          (funcall mathescape-status options))))
+      (when (eq mathescape 'yes)
+        (or engrave-faces-latex-mathescape t)))))
 
 (defun org-latex-src--engrave-code (content lang &optional theme options inline)
   "Engrave CONTENT to LaTeX in a LANG-mode buffer, and give the result.
@@ -3445,7 +3454,7 @@ to the Verbatim environment or Verb command."
                 engrave-faces-current-preset-style))
              (engraved-buffer
               (with-temp-buffer
-                (insert (string-trim-right content "\n"))
+                (insert (replace-regexp-in-string "\n\\'" "" content))
                 (when lang-mode
                   (if (functionp lang-mode)
                       (funcall lang-mode)

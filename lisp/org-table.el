@@ -2607,8 +2607,7 @@ location of point."
 		     (format-time-string
 		      (org-time-stamp-format
 		       (string-match-p "[0-9]\\{1,2\\}:[0-9]\\{2\\}" ts))
-		      (apply #'encode-time
-			     (save-match-data (org-parse-time-string ts))))))
+		      (save-match-data (org-time-string-to-time ts)))))
 		 form t t))
 
 	  (setq ev (if (and duration (string-match "^[0-9]+:[0-9]+\\(?::[0-9]+\\)?$" form))
@@ -5463,7 +5462,7 @@ The table is taken from the parameter TXT, or from the buffer at point."
         (nreverse table)))))
 
 (defun org-table-collapse-header (table &optional separator max-header-lines)
-  "Collapse the lines before \\='hline into a single header.
+  "Collapse the lines before `hline' into a single header.
 
 The given TABLE is a list of lists as returned by `org-table-to-lisp'.
 The leading lines before the first `hline' symbol are considered

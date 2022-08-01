@@ -1231,11 +1231,13 @@ For example, 9:30am would become 09:30 rather than  9:30."
   :type 'boolean)
 
 (defcustom org-agenda-clock-report-header nil
-  "Header for org agenda clock report mode"
+  "Header inserted before the table in Org agenda clock report mode.
+
+See Info node `(org) Agenda Commands' for more details."
   :group 'org-agenda
   :type '(choice
-    (string :tag "Header")
-    (const :tag "No header" nil))
+          (string :tag "Header")
+          (const :tag "No header" nil))
   :safe #'stringp
   :package-version '(Org . "9.6"))
 
@@ -1587,9 +1589,9 @@ will align with agenda items."
 
 (defcustom org-agenda-current-time-string
   (if (and (display-graphic-p)
-           (char-displayable-p ?⭠)
+           (char-displayable-p ?←)
            (char-displayable-p ?─))
-      "⭠ now ───────────────────────────────────────────────"
+      "← now ───────────────────────────────────────────────"
     "now - - - - - - - - - - - - - - - - - - - - - - - - -")
   "The string for the current time marker in the agenda."
   :group 'org-agenda-time-grid
@@ -1643,8 +1645,9 @@ alpha-up           Sort headlines alphabetically.
 alpha-down         Sort headlines alphabetically, reversed.
 
 The different possibilities will be tried in sequence, and testing stops
-if one comparison returns a \"not-equal\".  For example, the default
-    \\='(time-up category-keep priority-down)
+if one comparison returns a \"not-equal\".  For example,
+  (setq org-agenda-sorting-strategy
+        \\='(time-up category-keep priority-down))
 means: Pull out all entries having a specified time of day and sort them,
 in order to make a time schedule for the current day the first thing in the
 agenda listing for the day.  Of the entries without a time indication, keep
@@ -2107,10 +2110,11 @@ the lower-case version of all tags."
 
 (defcustom org-agenda-bulk-custom-functions nil
   "Alist of characters and custom functions for bulk actions.
-For example, this value makes those two functions available:
+For example, this makes those two functions available:
 
-  \\='((?R set-category)
-    (?C bulk-cut))
+  (setq org-agenda-bulk-custom-functions
+        \\='((?R set-category)
+          (?C bulk-cut)))
 
 With selected entries in an agenda buffer, `B R' will call
 the custom function `set-category' on the selected entries.
@@ -2121,7 +2125,8 @@ used for each call to your bulk custom function.  The argument
 collecting function will be run once and should return a list of
 arguments to pass to the bulk function.  For example:
 
-  \\='((?R set-category get-category))
+  (setq org-agenda-bulk-custom-functions
+        \\='((?R set-category get-category)))
 
 Now, `B R' will call the custom `get-category' which would prompt
 the user once for a category.  That category is then passed as an
@@ -2730,7 +2735,8 @@ For example, if you have a custom agenda command \"p\" and you
 want this command to be accessible only from plain text files,
 use this:
 
-   \\='((\"p\" ((in-file . \"\\\\.txt\\\\'\"))))
+  (setq org-agenda-custom-commands-contexts
+        \\='((\"p\" ((in-file . \"\\\\.txt\\\\'\")))))
 
 Here are the available contexts definitions:
 
@@ -2748,7 +2754,8 @@ accessible if there is at least one valid check.
 You can also bind a key to another agenda custom command
 depending on contextual rules.
 
-    \\='((\"p\" \"q\" ((in-file . \"\\\\.txt\\\\'\"))))
+  (setq org-agenda-custom-commands-contexts
+        \\='((\"p\" \"q\" ((in-file . \"\\\\.txt\\\\'\")))))
 
 Here it means: in .txt files, use \"p\" as the key for the
 agenda command otherwise associated with \"q\".  (The command
@@ -4154,7 +4161,7 @@ dimming them."                   ;FIXME: The arg isn't used, actually!
 
 If the header at `org-hd-marker' is blocked according to
 `org-entry-blocked-p', then if `org-agenda-dim-blocked-tasks' is
-\\='invisible and the header is not blocked by checkboxes, set the
+`invisible' and the header is not blocked by checkboxes, set the
 text property `org-todo-blocked' to `invisible', otherwise set it
 to t."
   (when (get-text-property 0 'todo-state entry)
@@ -5758,7 +5765,7 @@ displayed in agenda view."
 	    (substring
 	     (format-time-string
 	      (car org-time-stamp-formats)
-	      (encode-time	; DATE bound by calendar
+	      (org-encode-time	; DATE bound by calendar
 	       0 0 0 (nth 1 date) (car date) (nth 2 date)))
 	     1 11))
 	   "\\|\\(<[0-9]+-[0-9]+-[0-9]+[^>\n]+?\\+[0-9]+[hdwmy]>\\)"
@@ -6030,7 +6037,7 @@ then those holidays will be skipped."
 		   (substring
 		    (format-time-string
 		     (car org-time-stamp-formats)
-		     (encode-time  ; DATE bound by calendar
+		     (org-encode-time  ; DATE bound by calendar
 		      0 0 0 (nth 1 date) (car date) (nth 2 date)))
 		    1 11))))
 	 (org-agenda-search-headline-for-time nil)
@@ -7875,7 +7882,7 @@ Argument ARG is the prefix argument."
 When in a restricted subtree, remove it.
 
 The restriction will span over the entire file if TYPE is `file',
-or if type is \\='(4), or if the cursor is before the first headline
+or if TYPE is (4), or if the cursor is before the first headline
 in the file.  Otherwise, only apply the restriction to the current
 subtree."
   (interactive "P")
@@ -7922,11 +7929,14 @@ subtree."
 (defun org-agenda-remove-restriction-lock (&optional noupdate)
   "Remove agenda restriction lock."
   (interactive "P")
-  (if (not org-agenda-restrict)
+  (if (not (or org-agenda-restrict org-agenda-overriding-restriction))
       (message "No agenda restriction to remove.")
     (delete-overlay org-agenda-restriction-lock-overlay)
     (delete-overlay org-speedbar-restriction-lock-overlay)
     (setq org-agenda-overriding-restriction nil)
+    (unless org-agenda-keep-restricted-file-list
+      ;; There is a request to keep the file list in place
+      (put 'org-agenda-files 'org-restrict nil))
     (setq org-agenda-restrict nil)
     (put 'org-agenda-files 'org-restrict nil)
     (move-marker org-agenda-restrict-begin nil)
@@ -9743,7 +9753,7 @@ if it was hidden in the outline."
   (interactive "P")
   (let ((win (selected-window)))
     (org-agenda-goto t)
-    (when full-entry (org-fold-show-entry))
+    (when full-entry (org-fold-show-entry 'hide-drawers))
     (select-window win)))
 
 (defvar org-agenda-show-window nil)
@@ -9762,7 +9772,7 @@ fold drawers."
 	  (select-window org-agenda-show-window)
 	  (ignore-errors (scroll-up)))
       (org-agenda-goto t)
-      (org-fold-show-entry)
+      (org-fold-show-entry 'hide-drawers)
       (if arg (org-cycle-hide-drawers 'children)
 	(org-with-wide-buffer
 	 (narrow-to-region (org-entry-beginning-position)
@@ -9806,7 +9816,7 @@ if it was hidden in the outline."
      ((and (called-interactively-p 'any) (= more 1))
       (message "Remote: show with default settings"))
      ((= more 2)
-      (org-fold-show-entry)
+      (org-fold-show-entry 'hide-drawers)
       (org-fold-show-children)
       (save-excursion
 	(org-back-to-heading)
@@ -11119,8 +11129,8 @@ The prefix arg is passed through to the command if possible."
 		     (ignore-errors
 		       (let* ((date (calendar-gregorian-from-absolute
 				     (+ (org-today) distance)))
-			      (time (encode-time 0 0 0 (nth 1 date) (nth 0 date)
-						 (nth 2 date))))
+			      (time (org-encode-time
+                                     0 0 0 (nth 1 date) (nth 0 date) (nth 2 date))))
 			 (org-agenda-schedule nil time))))))))
 
 	(?f
@@ -11299,7 +11309,7 @@ argument: an entry from `org-agenda-get-day-entries'.
 FILTER can also be an alist with the car of each cell being
 either `headline' or `category'.  For example:
 
-  \\='((headline \"IMPORTANT\")
+   ((headline \"IMPORTANT\")
     (category \"Work\"))
 
 will only add headlines containing IMPORTANT or headlines

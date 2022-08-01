@@ -269,6 +269,14 @@ shown below.
 (add-to-list 'load-path (expand-file-name "/path/to/org-mode/lisp"))
 #+end_src
 
+If you are using Org mode version from Git repository, you can start
+minimal session using make.
+
+: # Bare Emacs
+: make repro
+: # or pass extra arguments
+: make repro REPRO_ARGS="-l /path/to/minimal/config.el /tmp/bug.org"
+
 If an error occurs, a "backtrace" can be very useful---see below on
 how to create one.  Often a small example file helps, along with clear
 information about:
@@ -2879,12 +2887,12 @@ For more information and examples see the [[https://orgmode.org/worg/org-tutoria
 - transpose ::
 
   When =y=, =yes=, or =t= attempt to transpose the table data before
-  plotting.  Also recognises the shorthand option =trans=.
+  plotting.  Also recognizes the shorthand option =trans=.
 
 - =type= ::
 
   Specify the type of the plot, by default one of  =2d=, =3d=, =radar=, or =grid=.
-  Available types can be customised with ~org-plot/preset-plot-types~.
+  Available types can be customized with ~org-plot/preset-plot-types~.
 
 - =with= ::
 
@@ -11112,8 +11120,8 @@ more details see the documentation of CDLaTeX mode):
   #+kindex: '
 
   Pressing the single-quote followed by another character modifies the
-  symbol before point with an accent or a font.  If you wait more than
-  1.5 seconds after the single-quote, a help window pops up.
+  LaTeX symbol before point with an accent or a font.  If you wait
+  more than 1.5 seconds after the single-quote, a help window pops up.
   Character modification works only inside LaTeX fragments; outside
   the quote is normal.
 
@@ -16810,10 +16818,71 @@ conformant to the Harvard style and the specification of the
 Wolkers-Kluwer publisher; since it relies on the ~bibtex~ processor of
 your LaTeX installation, it won't export to anything but PDF.
 
+** Bibliography printing
+
 The =PRINT_BIBLIOGRAPHY= keyword specifies where the bibliography
-should print.
+should be printed (note the colon):
 
 : #+print_bibliography:
+
+The bibliography printed by the LaTeX-based export processors
+"bibtex", "natbib" and "biblatex" has a chapter or section heading by
+default, while the "basic" and "csl" processors print the list of
+bibliography entries without a heading.
+
+A document may contain more than one =PRINT_BIBLIOGRAPHY= keywords.
+Each of the keywords will trigger printing the bibliography.
+
+The keywords can be used with or without additional options.  Options
+can be used, for example, to print only entries that belong to a
+certain category or to control formatting.  The set of supported
+=PRINT_BIBLIOGRAPHY= options and their interpretation varies between
+the different citation export processors.  Some export processors do
+not support passing options.
+
+*** Bibliography options in the "biblatex" and "csl" export processors
+
+The "biblatex" and "csl" export processors support bibliography
+options through a property list attached to the =PRINT_BIBLIOGRAPHY=
+keyword.  For example,
+
+: #print_bibliography: :keyword algebra :type book
+
+Values including spaces must be surrounded with double quotes.  If you
+need to use a key multiple times, you can separate its values with
+commas, but without any space in-between:
+
+: #print_bibliography: :keyword "algebraic logic" :nottype article,book
+
+The "biblatex" export processor accepts all options supported by
+BibLaTeX's ~\printbibliography~ command, while the "csl" processor
+accepts the following ones:
+
+- =:keyword <keyword(,keyword2...)>= :: Print only entries whose
+  keyword field contains all given keywords.
+
+- =:notkeyword <keyword(,keyword2...)>= :: Print only entries whose
+  keyword field does not contain any of the given keywords.
+
+- =:type <entrytype>= :: Print only entries whose type is
+  =<entrytype>=.  Entry type is the BibTeX/BibLaTeX entry type if this
+  information is available (the entry was read from a BibTeX/BibLaTeX
+  bibliography) and the CSL entry type otherwise.
+
+- =:nottype <entrytype(,entrytype2...)>= :: Print only entries whose
+  type is not among the given entry types.  Entry type is determined
+  as in the case of =:type=.
+
+- =:csltype <entrytype>= :: Print only entries whose CSL entry type
+  (possibly based on a conversion from BibTeX/BibLaTeX to CSL) is
+  =<entrytype>=.
+
+- =:notcsltype <entrytype(,entrytype2...)>= :: Print only entries whose
+  CSL entry type (possibly based on a conversion from BibTeX/BibLaTeX
+  to CSL) is not among the listed entry types.
+
+- =:filter <predicate>= :: Print only entries for which the given
+  Emacs Lisp predicate returns a non-~nil~ value.
 
 * Working with Source Code
 :PROPERTIES:
@@ -22074,7 +22143,7 @@ reading convenience.
 [fn:60] When working with the standard diary expression functions, you
 need to be very careful with the order of the arguments.  That order
 depends evilly on the variable ~calendar-date-style~.  For example, to
-specify a date December 12, 2005, the call might look like
+specify a date December 1, 2005, the call might look like
 =(diary-date 12 1 2005)= or =(diary-date 1 12 2005)= or =(diary-date
 2005 12 1)=, depending on the settings.  This has been the source of
 much confusion.  Org mode users can resort to special versions of

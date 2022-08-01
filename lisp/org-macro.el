@@ -370,6 +370,7 @@ Return value as a string."
       value)))
 
 (defun org-macro--vc-modified-time (file)
+  (require 'vc) ; Not everything we need is autoloaded.
   (save-window-excursion
     (when (vc-backend file)
       (let ((buf (get-buffer-create " *org-vc*"))
@@ -387,7 +388,7 @@ Return value as a string."
 				  (buffer-substring
 				   (point) (line-end-position)))))
 		       (when (cl-some #'identity time)
-			 (setq date (apply #'encode-time time))))))))
+			 (setq date (org-encode-time time))))))))
 	      (let ((proc (get-buffer-process buf)))
 		(while (and proc (accept-process-output proc .5 nil t)))))
 	  (kill-buffer buf))

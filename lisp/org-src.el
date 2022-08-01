@@ -230,12 +230,13 @@ Each element is a cell of the format
 
 Where FACE is either a defined face or an anonymous face.
 
-For instance, the following value would color the background of
+For instance, the following would color the background of
 emacs-lisp source blocks and python source blocks in purple and
 green, respectability.
 
-    \\='((\"emacs-lisp\" (:background \"#EEE2FF\"))
-      (\"python\" (:background \"#e5ffb8\")))"
+  (setq org-src-block-faces
+        \\='((\"emacs-lisp\" (:background \"#EEE2FF\"))
+          (\"python\" (:background \"#e5ffb8\"))))"
   :group 'org-edit-structure
   :type '(repeat (list (string :tag "language")
                        (choice
@@ -642,7 +643,12 @@ as `org-src-fontify-natively' is non-nil."
 	    (while (setq next (next-property-change pos))
 	      ;; Handle additional properties from font-lock, so as to
 	      ;; preserve, e.g., composition.
-	      (dolist (prop (cons 'face font-lock-extra-managed-props))
+              ;; FIXME: We copy 'font-lock-face property explicitly because
+              ;; `font-lock-mode' is not enabled in the buffers starting from
+              ;; space and the remapping between 'font-lock-face and 'face
+              ;; text properties may thus not be set.  See commit
+              ;; 453d634bc.
+	      (dolist (prop (append '(font-lock-face face) font-lock-extra-managed-props))
 		(let ((new-prop (get-text-property pos prop)))
                   (when new-prop
 		    (put-text-property

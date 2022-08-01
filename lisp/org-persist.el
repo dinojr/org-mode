@@ -358,15 +358,14 @@ FORMAT and ARGS are passed to `message'."
   "Bind container and associated from COLLECTION and execute BODY."
   (declare (debug (form body)) (indent 1))
   `(with-no-warnings
-     ;; FIXME: We only need to suppress warnings about unused
-     ;; let-bindings.  However, it is unclear how to achieve it with
-     ;; `with-suppressed-warnings'.
      (let* ((container (plist-get ,collection :container))
             (associated (plist-get ,collection :associated))
             (path (plist-get associated :file))
             (inode (plist-get associated :inode))
             (hash (plist-get associated :hash))
             (key (plist-get associated :key)))
+       ;; Suppress "unused variable" warnings.
+       (ignore container associated path inode hash key)
        ,@body)))
 
 (defun org-persist--find-index (collection)
@@ -657,7 +656,10 @@ COLLECTION is the plist holding data collection."
                          (format "%s-%s.%s" persist-file (md5 path) ext))))
         (unless (file-exists-p (file-name-directory file-copy))
           (make-directory (file-name-directory file-copy) t))
-        (url-copy-file path file-copy 'overwrite)
+        (if (org--should-fetch-remote-resource-p path)
+            (url-copy-file path file-copy 'overwrite)
+          (error "The remote resource %S is considered unsafe, and will not be downloaded."
+                 path))
         (format "%s-%s.%s" persist-file (md5 path) ext)))))
 
 (defun org-persist-write:index (container _)
