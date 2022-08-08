@@ -4712,43 +4712,33 @@ The following commands are available:
 
 \\{org-mode-map}"
   (setq-local org-mode-loading t)
-  ;; Disable `font-lock-mode' temporarily to delay fontification in case if
-  ;; `hack-local-variables' shows a popup window.  Such a popup causes
-  ;; redisplay and triggers fontification too early.
-  (let ((org-font-lock-enabled-p font-lock-mode))
-    (font-lock-mode -1)
-    ;; Apply file-local and directory-local variables, so that Org
-    ;; startup respects them.  See
-    ;; https://list.orgmode.org/587be554-906c-5370-2cf2-f08b14fa58ff@gmail.com/T/#u
-    (hack-local-variables 'ignore-mode-settings)
-    (org-load-modules-maybe)
-    (org-install-agenda-files-menu)
-    (when (and org-link-descriptive
-               (eq org-fold-core-style 'overlays))
-      (add-to-invisibility-spec '(org-link)))
-    (org-fold-initialize (or (and (stringp org-ellipsis) (not (equal "" org-ellipsis)) org-ellipsis)
-                          "..."))
-    (make-local-variable 'org-link-descriptive)
-    (when (eq org-fold-core-style 'overlays) (add-to-invisibility-spec '(org-hide-block . t)))
-    (if org-link-descriptive
-        (org-fold-core-set-folding-spec-property (car org-link--link-folding-spec) :visible nil)
-      (org-fold-core-set-folding-spec-property (car org-link--link-folding-spec) :visible t))
-    (setq-local outline-regexp org-outline-regexp)
-    (setq-local outline-level 'org-outline-level)
-    (when (and (stringp org-ellipsis) (not (equal "" org-ellipsis)))
-      (unless org-display-table
-        (setq org-display-table (make-display-table)))
-      (set-display-table-slot
-       org-display-table 4
-       (vconcat (mapcar (lambda (c) (make-glyph-code c 'org-ellipsis))
-		        org-ellipsis)))
-      (setq buffer-display-table org-display-table))
-    (org-set-regexps-and-options)
-    (org-set-font-lock-defaults)
-    (when (and org-tag-faces (not org-tags-special-faces-re))
-      ;; tag faces set outside customize.... force initialization.
-      (org-set-tag-faces 'org-tag-faces org-tag-faces))
-    (font-lock-mode org-font-lock-enabled-p))
+  (org-load-modules-maybe)
+  (org-install-agenda-files-menu)
+  (when (and org-link-descriptive
+             (eq org-fold-core-style 'overlays))
+    (add-to-invisibility-spec '(org-link)))
+  (org-fold-initialize (or (and (stringp org-ellipsis) (not (equal "" org-ellipsis)) org-ellipsis)
+                        "..."))
+  (make-local-variable 'org-link-descriptive)
+  (when (eq org-fold-core-style 'overlays) (add-to-invisibility-spec '(org-hide-block . t)))
+  (if org-link-descriptive
+      (org-fold-core-set-folding-spec-property (car org-link--link-folding-spec) :visible nil)
+    (org-fold-core-set-folding-spec-property (car org-link--link-folding-spec) :visible t))
+  (setq-local outline-regexp org-outline-regexp)
+  (setq-local outline-level 'org-outline-level)
+  (when (and (stringp org-ellipsis) (not (equal "" org-ellipsis)))
+    (unless org-display-table
+      (setq org-display-table (make-display-table)))
+    (set-display-table-slot
+     org-display-table 4
+     (vconcat (mapcar (lambda (c) (make-glyph-code c 'org-ellipsis))
+		      org-ellipsis)))
+    (setq buffer-display-table org-display-table))
+  (org-set-regexps-and-options)
+  (org-set-font-lock-defaults)
+  (when (and org-tag-faces (not org-tags-special-faces-re))
+    ;; tag faces set outside customize.... force initialization.
+    (org-set-tag-faces 'org-tag-faces org-tag-faces))
   ;; Calc embedded
   (setq-local calc-embedded-open-mode "# ")
   ;; Modify a few syntax entries
@@ -8883,7 +8873,8 @@ When foo is written as FOO, upcase the #+BEGIN/END as well."
 	 (region-end (and region? (copy-marker (region-end))))
 	 (extended? (string-match-p "\\`\\(src\\|export\\)\\'" type))
 	 (verbatim? (string-match-p
-		     (concat "\\`" (regexp-opt '("example" "export" "src")))
+		     (concat "\\`" (regexp-opt '("example" "export"
+                                                "src" "comment")))
 		     type))
          (upcase? (string= (car (split-string type))
                            (upcase (car (split-string type))))))
@@ -11475,12 +11466,18 @@ in Lisp code use `org-set-tags' instead."
       (save-excursion
 	(org-back-to-heading)
 	(let* ((all-tags (org-get-tags))
+               (local-table (or org-current-tag-alist (org-get-buffer-tags)))
 	       (table (setq org-last-tags-completion-table
-			    (org--tag-add-to-alist
-			     (and org-complete-tags-always-offer-all-agenda-tags
-				  (org-global-tags-completion-table
-				   (org-agenda-files)))
-			     (or org-current-tag-alist (org-get-buffer-tags)))))
+                            (append
+                             ;; Put local tags in front.
+                             local-table
+                             (cl-set-difference
+			      (org--tag-add-to-alist
+			       (and org-complete-tags-always-offer-all-agenda-tags
+				    (org-global-tags-completion-table
+				     (org-agenda-files)))
+			       local-table)
+                              local-table))))
 	       (current-tags
 		(cl-remove-if (lambda (tag) (get-text-property 0 'inherited tag))
 			      all-tags))
@@ -11765,7 +11762,13 @@ Returns the new tags string, or nil to not change the current settings."
 		  (while (or (rassoc char ntable) (rassoc char table))
 		    (setq char (1+ char)))
 		(setq c2 c1))
-	      (setq c (or c2 char)))
+	      (setq c (or c2
+                          (if (> char ?~)
+                              ?\s
+                            char)))
+              ;; Consider characters A-Z after a-z.
+              (if (equal char ?z)
+                  (setq char ?A)))
 	    (when ingroup (push tg (car groups)))
 	    (setq tg (org-add-props tg nil 'face
 				    (cond
@@ -17002,6 +17005,7 @@ When at a table, call the formula editor with `org-table-edit-formulas'.
 When in a source code block, call `org-edit-src-code'.
 When in a fixed-width region, call `org-edit-fixed-width-region'.
 When in an export block, call `org-edit-export-block'.
+When in a comment block, call `org-edit-comment-block'.
 When in a LaTeX environment, call `org-edit-latex-environment'.
 When at an INCLUDE, SETUPFILE or BIBLIOGRAPHY keyword, visit the included file.
 When at a footnote reference, call `org-edit-footnote-reference'.
@@ -17048,6 +17052,7 @@ Otherwise, return a user error."
       (`table-row (call-interactively 'org-table-edit-formulas))
       (`example-block (org-edit-src-code))
       (`export-block (org-edit-export-block))
+      (`comment-block (org-edit-comment-block))
       (`fixed-width (org-edit-fixed-width-region))
       (`latex-environment (org-edit-latex-environment))
       (`planning
