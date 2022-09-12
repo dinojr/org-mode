@@ -26,6 +26,10 @@
 ;; Org-Babel support for evaluating shell source code.
 
 ;;; Code:
+
+(require 'org-macs)
+(org-assert-version)
+
 (require 'ob)
 (require 'org-macs)
 (require 'shell)
@@ -42,6 +46,23 @@
 (defvar org-babel-default-header-args:shell '())
 (defvar org-babel-shell-names)
 
+(defconst org-babel-shell-set-prompt-commands
+  '(("fish" . "function fish_prompt\n\techo \"%s\"\nend")
+    ("csh" . "set prompt=\"%s\"")
+    ("posh" . "function prompt { \"%s\" }")
+    (t . "PS1=\"%s\""))
+  "Alist assigning shells with their prompt setting command.
+
+Each element of the alist associates a shell type from
+`org-babel-shell-names' with a template used to create a command to
+change the default prompt.  The template is an argument to `format'
+that will be called with a single additional argument: prompt string.
+
+The fallback association template is defined in (t . \"template\")
+alist element.")
+
+(defvar org-babel-prompt-command)
+
 (defun org-babel-shell-initialize ()
   "Define execution functions associated to shell names.
 This function has to be called whenever `org-babel-shell-names'
@@ -51,7 +72,10 @@ is modified outside the Customize interface."
     (eval `(defun ,(intern (concat "org-babel-execute:" name))
 	       (body params)
 	     ,(format "Execute a block of %s commands with Babel." name)
-	     (let ((shell-file-name ,name))
+	     (let ((shell-file-name ,name)
+                   (org-babel-prompt-command
+                    (or (alist-get ,name org-babel-shell-set-prompt-commands)
+                        (alist-get t org-babel-shell-set-prompt-commands))))
 	       (org-babel-execute:shell body params))))
     (eval `(defalias ',(intern (concat "org-babel-variable-assignments:" name))
 	     'org-babel-variable-assignments:shell
@@ -206,6 +230,13 @@ var of the same value."
       (mapconcat echo-var var "\n"))
      (t (funcall echo-var var)))))
 
+(defvar org-babel-sh-eoe-indicator "echo 'org_babel_sh_eoe'"
+  "String to indicate that evaluation has completed.")
+(defvar org-babel-sh-eoe-output "org_babel_sh_eoe"
+  "String to indicate that evaluation has completed.")
+(defvar org-babel-sh-prompt "org_babel_sh_prompt> "
+  "String to set prompt in session shell.")
+
 (defun org-babel-sh-initiate-session (&optional session _params)
   "Initiate a session named SESSION according to PARAMS."
   (when (and session (not (string= session "none")))
@@ -213,16 +244,19 @@ var of the same value."
       (or (org-babel-comint-buffer-livep session)
           (progn
 	    (shell session)
+            ;; Set unique prompt for easier analysis of the output.
+            (org-babel-comint-wait-for-output (current-buffer))
+            (org-babel-comint-input-command
+             (current-buffer)
+             (format org-babel-prompt-command org-babel-sh-prompt))
+            (setq-local comint-prompt-regexp
+                        (concat "^" (regexp-quote org-babel-sh-prompt)
+                                " *"))
 	    ;; Needed for Emacs 23 since the marker is initially
 	    ;; undefined and the filter functions try to use it without
 	    ;; checking.
 	    (set-marker comint-last-output-start (point))
 	    (get-buffer (current-buffer)))))))
-
-(defvar org-babel-sh-eoe-indicator "echo 'org_babel_sh_eoe'"
-  "String to indicate that evaluation has completed.")
-(defvar org-babel-sh-eoe-output "org_babel_sh_eoe"
-  "String to indicate that evaluation has completed.")
 
 (defun org-babel-sh-evaluate (session body &optional params stdin cmdline)
   "Pass BODY to the Shell process in BUFFER.
@@ -249,12 +283,16 @@ return the value of the last statement in BODY."
 	      (set-file-modes script-file #o755)
 	      (with-temp-file stdin-file (insert (or stdin "")))
 	      (with-temp-buffer
-		(call-process-shell-command
-		 (concat (if shebang script-file
-			   (format "%s %s" shell-file-name script-file))
-			 (and cmdline (concat " " cmdline)))
-		 stdin-file
-		 (current-buffer))
+                (with-connection-local-variables
+                 (apply #'process-file
+                        (if shebang (file-local-name script-file)
+                          shell-file-name)
+		        stdin-file
+                        (current-buffer)
+                        nil
+                        (if shebang (when cmdline (list cmdline))
+                          (list shell-command-switch
+                                (concat (file-local-name script-file)  " " cmdline)))))
 		(buffer-string))))
 	   (session			; session evaluation
 	    (mapconcat
@@ -288,7 +326,7 @@ return the value of the last statement in BODY."
 	      (set-file-modes script-file #o755)
 	      (org-babel-eval script-file "")))
 	   (t (org-babel-eval shell-file-name (org-trim body))))))
-    (when value-is-exit-status
+    (when (and results value-is-exit-status)
       (setq results (car (reverse (split-string results "\n" t)))))
     (when results
       (let ((result-params (cdr (assq :result-params params))))

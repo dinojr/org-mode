@@ -78,6 +78,9 @@
 
 ;;; Code:
 
+(require 'org-macs)
+(org-assert-version)
+
 (require 'org)
 
 (defgroup org-inlinetask nil
@@ -238,7 +241,7 @@ going below `org-inlinetask-min-level'."
 	  (setq beg (point))
 	  (replace-match down-task nil t nil 1)
 	  (org-inlinetask-goto-end)
-	  (if (and (eobp) (looking-back "END\\s-*" (point-at-bol)))
+	  (if (and (eobp) (looking-back "END\\s-*" (line-beginning-position)))
               (beginning-of-line)
             (forward-line -1))
 	  (unless (= (point) beg)
@@ -264,7 +267,7 @@ If the task has an end part, also demote it."
 	(setq beg (point))
 	(replace-match down-task nil t nil 1)
 	(org-inlinetask-goto-end)
-        (if (and (eobp) (looking-back "END\\s-*" (point-at-bol)))
+        (if (and (eobp) (looking-back "END\\s-*" (line-beginning-position)))
             (beginning-of-line)
           (forward-line -1))
 	(unless (= (point) beg)
@@ -305,41 +308,25 @@ If the task has an end part, also demote it."
       (add-text-properties (match-beginning 3) (match-end 3)
 			   '(face org-inlinetask font-lock-fontified t)))))
 
-(defun org-inlinetask-toggle-visibility--text-properties ()
-  "Toggle visibility of inline task at point."
+(defun org-inlinetask-toggle-visibility (&optional state)
+  "Toggle visibility of inline task at point.
+When optional argument STATE is `fold', fold unconditionally.
+When STATE is `unfold', unfold unconditionally."
   (let ((end (save-excursion
 	       (org-inlinetask-goto-end)
 	       (if (bolp) (1- (point)) (point))))
 	(start (save-excursion
 		 (org-inlinetask-goto-beginning)
-		 (point-at-eol))))
+		 (line-end-position))))
     (cond
      ;; Nothing to show/hide.
      ((= end start))
      ;; Inlinetask was folded: expand it.
-     ((org-fold-get-folding-spec 'headline (1+ start))
+     ((and (not (eq state 'fold))
+           (or (eq state 'unfold)
+               (org-fold-get-folding-spec 'headline (1+ start))))
       (org-fold-region start end nil 'headline))
      (t (org-fold-region start end t 'headline)))))
-(defun org-inlinetask-toggle-visibility--overlays ()
-  "Toggle visibility of inline task at point."
-  (let ((end (save-excursion
-	       (org-inlinetask-goto-end)
-	       (if (bolp) (1- (point)) (point))))
-	(start (save-excursion
-		 (org-inlinetask-goto-beginning)
-		 (point-at-eol))))
-    (cond
-     ;; Nothing to show/hide.
-     ((= end start))
-     ;; Inlinetask was folded: expand it.
-     ((eq (get-char-property (1+ start) 'invisible) 'outline)
-      (org-fold-region start end nil 'outline))
-     (t (org-fold-region start end t 'outline)))))
-(defsubst org-inlinetask-toggle-visibility ()
-  "Toggle visibility of inline task at point."
-  (if (eq org-fold-core-style 'text-properties)
-      (org-inlinetask-toggle-visibility--text-properties)
-    (org-inlinetask-toggle-visibility--overlays)))
 
 (defun org-inlinetask-hide-tasks (state)
   "Hide inline tasks in buffer when STATE is `contents' or `children'.
@@ -350,16 +337,15 @@ This function is meant to be used in `org-cycle-hook'."
        (save-excursion
 	 (goto-char (point-min))
 	 (while (re-search-forward regexp nil t)
-	   (org-inlinetask-toggle-visibility)
+	   (org-inlinetask-toggle-visibility 'fold)
 	   (org-inlinetask-goto-end)))))
     (`children
      (save-excursion
        (while
 	   (or (org-inlinetask-at-task-p)
 	       (and (outline-next-heading) (org-inlinetask-at-task-p)))
-	 (org-inlinetask-toggle-visibility)
-	 (org-inlinetask-goto-end)
-         (backward-char))))))
+	 (org-inlinetask-toggle-visibility 'fold)
+	 (org-inlinetask-goto-end))))))
 
 (defun org-inlinetask-remove-END-maybe ()
   "Remove an END line when present."

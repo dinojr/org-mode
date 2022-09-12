@@ -29,6 +29,10 @@
 ;; octave-mode.el and octave-inf.el come with GNU emacs
 
 ;;; Code:
+
+(require 'org-macs)
+(org-assert-version)
+
 (require 'ob)
 (require 'org-macs)
 
@@ -255,7 +259,7 @@ This removes initial blank and comment lines and then calls
       (insert-file-contents file-name)
       (re-search-forward "^[ \t]*[^# \t]" nil t)
       (when (< (setq beg (point-min))
-	       (setq end (point-at-bol)))
+	       (setq end (line-beginning-position)))
 	(delete-region beg end)))
     (org-babel-import-elisp-from-file temp-file '(16))))
 

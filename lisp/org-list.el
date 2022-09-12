@@ -76,6 +76,9 @@
 
 ;;; Code:
 
+(require 'org-macs)
+(org-assert-version)
+
 (require 'cl-lib)
 (require 'org-macs)
 (require 'org-compat)
@@ -519,7 +522,7 @@ Contexts `block' and `invalid' refer to `org-list-forbidden-blocks'."
 		   (and (not (looking-at beg-re))
 			(not (looking-at end-re))
 			(setq beg (and (re-search-backward beg-re lim-up t)
-				       (1+ (point-at-eol))))
+				       (1+ (line-end-position))))
 			(setq end (or (and (re-search-forward end-re lim-down t)
 					   (1- (match-beginning 0)))
 				      lim-down))
@@ -530,12 +533,12 @@ Contexts `block' and `invalid' refer to `org-list-forbidden-blocks'."
 	   (when (save-excursion
 		   (and (not (looking-at block-re))
 			(setq beg (and (re-search-backward block-re lim-up t)
-				       (1+ (point-at-eol))))
+				       (1+ (line-end-position))))
 			(looking-at "^[ \t]*#\\+begin_\\(\\S-+\\)")
 			(setq type (downcase (match-string 1)))
 			(goto-char beg)
 			(setq end (or (and (re-search-forward block-re lim-down t)
-					   (1- (point-at-bol)))
+					   (1- (line-beginning-position)))
 				      lim-down))
 			(>= end pos)
 			(equal (downcase (match-string 1)) "end")))
@@ -549,7 +552,7 @@ Contexts `block' and `invalid' refer to `org-list-forbidden-blocks'."
 			     (end-re (concat beg-re "END[ \t]*$")))
 			(and (not (looking-at "^\\*+"))
 			     (setq beg (and (re-search-backward beg-re lim-up t)
-					    (1+ (point-at-eol))))
+					    (1+ (line-end-position))))
 			     (not (looking-at end-re))
 			     (setq end (and (re-search-forward end-re lim-down t)
 					    (1- (match-beginning 0))))
@@ -571,7 +574,7 @@ values are:
 6. position at item end.
 
 Thus the following list, where numbers in parens are
-point-at-bol:
+line-beginning-position:
 
 - [X] first item                             (1)
   1. sub-item 1                              (18)
@@ -619,7 +622,7 @@ Assume point is at an item."
 	    ;; Ensure list ends at the first blank line.
 	    (lambda ()
 	      (skip-chars-backward " \r\t\n")
-	      (min (1+ (point-at-eol)) lim-down))))
+	      (min (1+ (line-end-position)) lim-down))))
       ;; 1. Read list from starting item to its beginning, and save
       ;;    top item position and indentation in BEG-CELL.  Also store
       ;;    ending position of items in END-LST.
@@ -874,7 +877,7 @@ Point returned is at end of line."
   (save-excursion
     (goto-char (org-list-get-item-end item struct))
     (skip-chars-backward " \r\t\n")
-    (point-at-eol)))
+    (line-end-position)))
 
 (defun org-list-get-parent (item struct parents)
   "Return parent of ITEM or nil.
@@ -1079,7 +1082,7 @@ It determines the number of whitespaces to append by looking at
 	  (replace-match spaces nil nil bullet 1)
 	bullet))))
 
-(defun org-list-swap-items--text-properties (beg-A beg-B struct)
+(defun org-list-swap-items (beg-A beg-B struct)
   "Swap item starting at BEG-A with item starting at BEG-B in STRUCT.
 
 Blank lines at the end of items are left in place.  Item
@@ -1102,11 +1105,23 @@ This function modifies STRUCT."
 	     (body-B (buffer-substring beg-B end-B-no-blank))
 	     (between-A-no-blank-and-B (buffer-substring end-A-no-blank beg-B))
 	     (sub-A (cons beg-A (org-list-get-subtree beg-A struct)))
-	     (sub-B (cons beg-B (org-list-get-subtree beg-B struct))))
+	     (sub-B (cons beg-B (org-list-get-subtree beg-B struct)))
+	     ;; Store inner folds responsible for visibility status.
+	     (folds
+	      (cons
+               (org-fold-core-get-regions :from beg-A :to end-A :relative t)
+               (org-fold-core-get-regions :from beg-B :to end-B :relative t))))
+        ;; Clear up the folds.
+        (org-fold-region beg-A end-B-no-blank nil)
         ;; 1. Move effectively items in buffer.
         (goto-char beg-A)
         (delete-region beg-A end-B-no-blank)
         (insert (concat body-B between-A-no-blank-and-B body-A))
+        ;; Restore visibility status.
+        (org-fold-core-regions (cdr folds) :relative beg-A)
+        (org-fold-core-regions
+         (car folds)
+         :relative (+ beg-B (- size-B size-A (length between-A-no-blank-and-B))))
         ;; 2. Now modify struct.  No need to re-read the list, the
         ;;    transformation is just a shift of positions.  Some special
         ;;    attention is required for items ending at END-A and END-B
@@ -1137,105 +1152,6 @@ This function modifies STRUCT."
         (setq struct (sort struct #'car-less-than-car))
         ;; Return structure.
         struct))))
-(defun org-list-swap-items--overlays (beg-A beg-B struct)
-  "Swap item starting at BEG-A with item starting at BEG-B in STRUCT.
-
-Blank lines at the end of items are left in place.  Item
-visibility is preserved.  Return the new structure after the
-changes.
-
-Assume BEG-A is lesser than BEG-B and that BEG-A and BEG-B belong
-to the same sub-list.
-
-This function modifies STRUCT."
-  (save-excursion
-    (let* ((end-A-no-blank (org-list-get-item-end-before-blank beg-A struct))
-	   (end-B-no-blank (org-list-get-item-end-before-blank beg-B struct))
-	   (end-A (org-list-get-item-end beg-A struct))
-	   (end-B (org-list-get-item-end beg-B struct))
-	   (size-A (- end-A-no-blank beg-A))
-	   (size-B (- end-B-no-blank beg-B))
-	   (body-A (buffer-substring beg-A end-A-no-blank))
-	   (body-B (buffer-substring beg-B end-B-no-blank))
-	   (between-A-no-blank-and-B (buffer-substring end-A-no-blank beg-B))
-	   (sub-A (cons beg-A (org-list-get-subtree beg-A struct)))
-	   (sub-B (cons beg-B (org-list-get-subtree beg-B struct)))
-	   ;; Store overlays responsible for visibility status.  We
-	   ;; also need to store their boundaries as they will be
-	   ;; removed from buffer.
-	   (overlays
-	    (cons
-	     (delq nil
-		   (mapcar (lambda (o)
-			     (and (>= (overlay-start o) beg-A)
-				  (<= (overlay-end o) end-A)
-				  (list o (overlay-start o) (overlay-end o))))
-			   (overlays-in beg-A end-A)))
-	     (delq nil
-		   (mapcar (lambda (o)
-			     (and (>= (overlay-start o) beg-B)
-				  (<= (overlay-end o) end-B)
-				  (list o (overlay-start o) (overlay-end o))))
-			   (overlays-in beg-B end-B))))))
-      ;; 1. Move effectively items in buffer.
-      (goto-char beg-A)
-      (delete-region beg-A end-B-no-blank)
-      (insert (concat body-B between-A-no-blank-and-B body-A))
-      ;; 2. Now modify struct.  No need to re-read the list, the
-      ;;    transformation is just a shift of positions.  Some special
-      ;;    attention is required for items ending at END-A and END-B
-      ;;    as empty spaces are not moved there.  In others words,
-      ;;    item BEG-A will end with whitespaces that were at the end
-      ;;    of BEG-B and the same applies to BEG-B.
-      (dolist (e struct)
-	(let ((pos (car e)))
-	  (cond
-	   ((< pos beg-A))
-	   ((memq pos sub-A)
-	    (let ((end-e (nth 6 e)))
-	      (setcar e (+ pos (- end-B-no-blank end-A-no-blank)))
-	      (setcar (nthcdr 6 e)
-		      (+ end-e (- end-B-no-blank end-A-no-blank)))
-	      (when (= end-e end-A) (setcar (nthcdr 6 e) end-B))))
-	   ((memq pos sub-B)
-	    (let ((end-e (nth 6 e)))
-	      (setcar e (- (+ pos beg-A) beg-B))
-	      (setcar (nthcdr 6 e) (+ end-e (- beg-A beg-B)))
-	      (when (= end-e end-B)
-		(setcar (nthcdr 6 e)
-			(+ beg-A size-B (- end-A end-A-no-blank))))))
-	   ((< pos beg-B)
-	    (let ((end-e (nth 6 e)))
-	      (setcar e (+ pos (- size-B size-A)))
-	      (setcar (nthcdr 6 e) (+ end-e (- size-B size-A))))))))
-      (setq struct (sort struct #'car-less-than-car))
-      ;; Restore visibility status, by moving overlays to their new
-      ;; position.
-      (dolist (ov (car overlays))
-	(move-overlay
-	 (car ov)
-	 (+ (nth 1 ov) (- (+ beg-B (- size-B size-A)) beg-A))
-	 (+ (nth 2 ov) (- (+ beg-B (- size-B size-A)) beg-A))))
-      (dolist (ov (cdr overlays))
-	(move-overlay (car ov)
-		      (+ (nth 1 ov) (- beg-A beg-B))
-		      (+ (nth 2 ov) (- beg-A beg-B))))
-      ;; Return structure.
-      struct)))
-(defsubst org-list-swap-items (beg-A beg-B struct)
-  "Swap item starting at BEG-A with item starting at BEG-B in STRUCT.
-
-Blank lines at the end of items are left in place.  Item
-visibility is preserved.  Return the new structure after the
-changes.
-
-Assume BEG-A is lesser than BEG-B and that BEG-A and BEG-B belong
-to the same sub-list.
-
-This function modifies STRUCT."
-  (if (eq org-fold-core-style 'text-properties)
-      (org-list-swap-items--text-properties beg-A beg-B struct)
-    (org-list-swap-items--overlays beg-A beg-B struct)))
 
 (defun org-list-separating-blank-lines-number (pos struct prevs)
   "Return number of blank lines that should separate items in list.
@@ -1256,7 +1172,7 @@ some heuristics to guess the result."
 	   (lambda ()
 	     ;; Count blank lines above beginning of line.
 	     (save-excursion
-	       (count-lines (goto-char (point-at-bol))
+	       (count-lines (goto-char (line-beginning-position))
 			    (progn (skip-chars-backward " \r\t\n")
 				   (forward-line)
 				   (point)))))))
@@ -1361,7 +1277,7 @@ This function modifies STRUCT."
 		 ;; must be removed, or they will be left, stacking up
 		 ;; after the list.
 		 (when (< item-end pos)
-		   (delete-region (1- item-end) (point-at-eol)))
+		   (delete-region (1- item-end) (line-end-position)))
 		 (skip-chars-backward " \r\t\n")
 		 ;; Cut position is after any blank on the line.
 		 (save-excursion
@@ -1438,7 +1354,7 @@ STRUCT is the list structure."
 		  (save-excursion
 		    (goto-char item)
 		    (skip-chars-backward " \r\t\n")
-		    (min (1+ (point-at-eol)) (point-max)))
+		    (min (1+ (line-end-position)) (point-max)))
 		item)))
     ;; Remove item from buffer.
     (delete-region beg end)
@@ -1515,7 +1431,7 @@ This function returns, destructively, the new list structure."
 		      (setq dest (org-list-get-list-end item struct prevs))
 		      (save-excursion
 			(goto-char (org-list-get-last-item item struct prevs))
-			(point-at-eol)))
+			(line-end-position)))
 		     ((and (stringp dest) (string-match-p "\\`[0-9]+\\'" dest))
 		      (let* ((all (org-list-get-all-items item struct prevs))
 			     (len (length all))
@@ -1527,7 +1443,7 @@ This function returns, destructively, the new list structure."
 			  (save-excursion
 			    (goto-char
 			     (org-list-get-last-item item struct prevs))
-			    (point-at-eol)))))
+			    (line-end-position)))))
 		     (t dest)))
 	 (org-M-RET-may-split-line nil)
 	 ;; Store inner overlays (to preserve visibility).
@@ -1969,7 +1885,7 @@ Initial position of cursor is restored after the changes."
 		    (insert (concat new-box (unless counterp " "))))))
 	      ;; c.  Indent item to appropriate column.
 	      (unless (= new-ind old-ind)
-		(delete-region (goto-char (point-at-bol))
+		(delete-region (goto-char (line-beginning-position))
 			       (progn (skip-chars-forward " \t") (point)))
 		(indent-to new-ind))))))
     ;; 1. First get list of items and position endings.  We maintain
@@ -2099,7 +2015,7 @@ Sublists of the list are skipped.  Cursor is always at the
 beginning of the item."
   (let* ((struct (org-list-struct))
 	 (prevs (org-list-prevs-alist struct))
-	 (item (copy-marker (point-at-bol)))
+	 (item (copy-marker (line-beginning-position)))
 	 (all (org-list-get-all-items (marker-position item) struct prevs))
 	 (value init-value))
     (dolist (e (nreverse all))
@@ -2236,10 +2152,10 @@ the item, so this really moves item trees."
   (interactive)
   (unless (org-at-item-p) (error "Not at an item"))
   (let* ((col (current-column))
-	 (item (point-at-bol))
+	 (item (line-beginning-position))
 	 (struct (org-list-struct))
 	 (prevs (org-list-prevs-alist struct))
-	 (next-item (org-list-get-next-item (point-at-bol) struct prevs)))
+	 (next-item (org-list-get-next-item (line-beginning-position) struct prevs)))
     (unless (or next-item org-list-use-circular-motion)
       (user-error "Cannot move this item further down"))
     (if (not next-item)
@@ -2257,10 +2173,10 @@ the item, so this really moves item trees."
   (interactive)
   (unless (org-at-item-p) (error "Not at an item"))
   (let* ((col (current-column))
-	 (item (point-at-bol))
+	 (item (line-beginning-position))
 	 (struct (org-list-struct))
 	 (prevs (org-list-prevs-alist struct))
-	 (prev-item (org-list-get-prev-item (point-at-bol) struct prevs)))
+	 (prev-item (org-list-get-prev-item (line-beginning-position) struct prevs)))
     (unless (or prev-item org-list-use-circular-motion)
       (user-error "Cannot move this item further up"))
     (if (not prev-item)
@@ -2426,7 +2342,7 @@ is an integer, 0 means `-', 1 means `+' etc.  If WHICH is
 	   (old-struct (copy-tree struct))
 	   (cbox (org-list-get-checkbox cpos struct))
            (prevs (org-list-prevs-alist struct))
-	   (start (org-list-get-list-begin (point-at-bol) struct prevs))
+	   (start (org-list-get-list-begin (line-beginning-position) struct prevs))
 	   (new (unless (and cbox (equal arg '(4)) (equal start cpos))
 		  "[ ]")))
       (dolist (pos (org-list-get-all-items
@@ -2486,7 +2402,7 @@ subtree, ignoring planning line and any drawer following it."
 		(let ((limit (region-end)))
 		  (goto-char (region-beginning))
 		  (if (org-list-search-forward (org-item-beginning-re) limit t)
-		      (setq lim-up (point-at-bol))
+		      (setq lim-up (line-beginning-position))
 		    (error "No item in region"))
 		  (setq lim-down (copy-marker limit))))
 	       ((org-at-heading-p)
@@ -2495,14 +2411,14 @@ subtree, ignoring planning line and any drawer following it."
 		(let ((limit (save-excursion (outline-next-heading) (point))))
 		  (org-end-of-meta-data t)
 		  (if (org-list-search-forward (org-item-beginning-re) limit t)
-		      (setq lim-up (point-at-bol))
+		      (setq lim-up (line-beginning-position))
 		    (error "No item in subtree"))
 		  (setq lim-down (copy-marker limit))))
 	       ;; Just one item: set SINGLEP flag.
 	       ((org-at-item-p)
 		(setq singlep t)
-		(setq lim-up (point-at-bol)
-		      lim-down (copy-marker (point-at-eol))))
+		(setq lim-up (line-beginning-position)
+		      lim-down (copy-marker (line-end-position))))
 	       (t (error "Not at an item or heading, and no active region"))))
 	     ;; Determine the checkbox going to be applied to all items
 	     ;; within bounds.
@@ -2750,7 +2666,7 @@ Return t if successful."
 	   ;; Are we going to move the whole list?
 	   (specialp
 	    (and (not regionp)
-		 (= top (point-at-bol))
+		 (= top (line-beginning-position))
 		 (cdr (assq 'indent org-list-automatic-rules))
 		 (if no-subtree
 		     (user-error
@@ -2764,12 +2680,12 @@ Return t if successful."
 	    (progn
 	      (set-marker org-last-indent-begin-marker rbeg)
 	      (set-marker org-last-indent-end-marker rend))
-	  (set-marker org-last-indent-begin-marker (point-at-bol))
+	  (set-marker org-last-indent-begin-marker (line-beginning-position))
 	  (set-marker org-last-indent-end-marker
 		      (cond
 		       (specialp (org-list-get-bottom-point struct))
-		       (no-subtree (1+ (point-at-bol)))
-		       (t (org-list-get-item-end (point-at-bol) struct))))))
+		       (no-subtree (1+ (line-beginning-position)))
+		       (t (org-list-get-item-end (line-beginning-position) struct))))))
       (let* ((beg (marker-position org-last-indent-begin-marker))
 	     (end (marker-position org-last-indent-end-marker)))
 	(cond
@@ -3007,8 +2923,8 @@ function is being called interactively."
   (let* ((case-func (if with-case 'identity 'downcase))
          (struct (org-list-struct))
          (prevs (org-list-prevs-alist struct))
-	 (start (org-list-get-list-begin (point-at-bol) struct prevs))
-	 (end (org-list-get-list-end (point-at-bol) struct prevs))
+	 (start (org-list-get-list-begin (line-beginning-position) struct prevs))
+	 (end (org-list-get-list-end (line-beginning-position) struct prevs))
 	 (sorting-type
 	  (or sorting-type
 	      (progn
@@ -3053,21 +2969,21 @@ function is being called interactively."
 		   ((= dcst ?n)
 		    (string-to-number
 		     (org-sort-remove-invisible
-		      (buffer-substring (match-end 0) (point-at-eol)))))
+		      (buffer-substring (match-end 0) (line-end-position)))))
 		   ((= dcst ?a)
 		    (funcall case-func
 			     (org-sort-remove-invisible
 			      (buffer-substring
-			       (match-end 0) (point-at-eol)))))
+			       (match-end 0) (line-end-position)))))
 		   ((= dcst ?t)
 		    (cond
 		     ;; If it is a timer list, convert timer to seconds
 		     ((org-at-item-timer-p)
 		      (org-timer-hms-to-secs (match-string 1)))
 		     ((or (save-excursion
-			    (re-search-forward org-ts-regexp (point-at-eol) t))
+			    (re-search-forward org-ts-regexp (line-end-position) t))
 			  (save-excursion (re-search-forward org-ts-regexp-both
-							     (point-at-eol) t)))
+							     (line-end-position) t)))
 		      (org-time-string-to-seconds (match-string 0)))
 		     (t (float-time now))))
 		   ((= dcst ?x) (or (and (stringp (match-string 1))
@@ -3140,14 +3056,14 @@ With a prefix argument ARG, change the region in a single item."
 	   (save-excursion
 	     (goto-char pos)
 	     (skip-chars-forward " \r\t\n")
-	     (point-at-bol))))
+	     (line-beginning-position))))
 	beg end)
     ;; Determine boundaries of changes.
     (if (org-region-active-p)
 	(setq beg (funcall skip-blanks (region-beginning))
 	      end (copy-marker (region-end)))
-      (setq beg (point-at-bol)
-	    end (copy-marker (point-at-eol))))
+      (setq beg (line-beginning-position)
+	    end (copy-marker (line-end-position))))
     ;; Depending on the starting line, choose an action on the text
     ;; between BEG and END.
     (org-with-limited-levels

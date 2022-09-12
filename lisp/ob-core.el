@@ -23,6 +23,10 @@
 ;; along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.
 
 ;;; Code:
+
+(require 'org-macs)
+(org-assert-version)
+
 (require 'cl-lib)
 (require 'ob-eval)
 (require 'org-macs)
@@ -712,7 +716,7 @@ a list with the following pattern:
 
 ;;;###autoload
 (defun org-babel-execute-src-block (&optional arg info params)
-  "Execute the current source code block.
+  "Execute the current source code block and return the result.
 Insert the results of execution into the buffer.  Source code
 execution and the collection and formatting of results can be
 controlled through a variety of header arguments.
@@ -776,51 +780,50 @@ block."
 		     (capitalize lang)
 		     (let ((name (nth 4 info)))
 		       (if name (format " (%s)" name) "")))
-	    (if (member "none" result-params)
-		(progn (funcall cmd body params)
-		       (message "result silenced"))
-	      (setq result
-		    (let ((r (funcall cmd body params)))
-		      (if (and (eq (cdr (assq :result-type params)) 'value)
-			       (or (member "vector" result-params)
-				   (member "table" result-params))
-			       (not (listp r)))
-			  (list (list r))
-			r)))
-	      (let ((file (and (member "file" result-params)
-			       (cdr (assq :file params)))))
-		;; If non-empty result and :file then write to :file.
-		(when file
-		  ;; If `:results' are special types like `link' or
-		  ;; `graphics', don't write result to `:file'.  Only
-		  ;; insert a link to `:file'.
-		  (when (and result
-			     (not (or (member "link" result-params)
-				      (member "graphics" result-params))))
-		    (with-temp-file file
-		      (insert (org-babel-format-result
-			       result
-			       (cdr (assq :sep params)))))
-		    ;; Set file permissions if header argument
-		    ;; `:file-mode' is provided.
-		    (when (assq :file-mode params)
-		      (set-file-modes file (cdr (assq :file-mode params)))))
-		  (setq result file))
-		;; Possibly perform post process provided its
-		;; appropriate.  Dynamically bind "*this*" to the
-		;; actual results of the block.
-		(let ((post (cdr (assq :post params))))
-		  (when post
-		    (let ((*this* (if (not file) result
-				    (org-babel-result-to-file
-				     file
-				     (org-babel--file-desc params result)
-                                     'attachment))))
-		      (setq result (org-babel-ref-resolve post))
-		      (when file
-			(setq result-params (remove "file" result-params))))))
-		(org-babel-insert-result
-		 result result-params info new-hash lang)))
+	    (setq result
+		  (let ((r (funcall cmd body params)))
+		    (if (and (eq (cdr (assq :result-type params)) 'value)
+			     (or (member "vector" result-params)
+				 (member "table" result-params))
+			     (not (listp r)))
+			(list (list r))
+		      r)))
+	    (let ((file (and (member "file" result-params)
+			     (cdr (assq :file params)))))
+	      ;; If non-empty result and :file then write to :file.
+	      (when file
+		;; If `:results' are special types like `link' or
+		;; `graphics', don't write result to `:file'.  Only
+		;; insert a link to `:file'.
+		(when (and result
+			   (not (or (member "link" result-params)
+				  (member "graphics" result-params))))
+		  (with-temp-file file
+		    (insert (org-babel-format-result
+			     result
+			     (cdr (assq :sep params)))))
+		  ;; Set file permissions if header argument
+		  ;; `:file-mode' is provided.
+		  (when (assq :file-mode params)
+		    (set-file-modes file (cdr (assq :file-mode params)))))
+		(setq result file))
+	      ;; Possibly perform post process provided its
+	      ;; appropriate.  Dynamically bind "*this*" to the
+	      ;; actual results of the block.
+	      (let ((post (cdr (assq :post params))))
+		(when post
+		  (let ((*this* (if (not file) result
+				  (org-babel-result-to-file
+				   file
+				   (org-babel--file-desc params result)
+                                   'attachment))))
+		    (setq result (org-babel-ref-resolve post))
+		    (when file
+		      (setq result-params (remove "file" result-params))))))
+	      (if (member "none" result-params)
+		  (message "result silenced")
+	        (org-babel-insert-result
+	         result result-params info new-hash lang)))
 	    (run-hooks 'org-babel-after-execute-hook)
 	    result)))))))
 
@@ -936,7 +939,7 @@ arguments and pop open the results in a preview buffer."
 		       vals ""))))))
     (save-excursion
       (goto-char begin)
-      (goto-char (point-at-eol))
+      (goto-char (line-end-position))
       (unless (= (char-before (point)) ?\ ) (insert " "))
       (insert ":" header-arg) (when value (insert " " value)))))
 
@@ -1955,9 +1958,9 @@ region is not active then the point is demarcated."
              (let ((lang (nth 0 info))
                    (indent (make-string (current-indentation) ?\s)))
 	       (when (string-match "^[[:space:]]*$"
-				   (buffer-substring (point-at-bol)
-						     (point-at-eol)))
-		 (delete-region (point-at-bol) (point-at-eol)))
+				   (buffer-substring (line-beginning-position)
+						     (line-end-position)))
+		 (delete-region (line-beginning-position) (line-end-position)))
                (insert (concat
 			(if (looking-at "^") "" "\n")
 			indent (if upper-case-p "#+END_SRC\n" "#+end_src\n")
@@ -2157,7 +2160,7 @@ Return nil if ELEMENT cannot be read."
 	(or (org-babel--string-to-number v) v)))
      (`table (org-babel-read-table))
      (`plain-list (org-babel-read-list))
-     (`example-block
+     ((or `example-block `src-block)
       (let ((v (org-element-property :value element)))
 	(if (or org-src-preserve-indentation
 		(org-element-property :preserve-indent element))
@@ -2330,8 +2333,8 @@ INFO may provide the values of these header arguments (in the
       (when inline
 	(let ((warning
 	       (or (and (member "table" result-params) "`:results table'")
-		   (and (listp result) "list result")
-		   (and (string-match-p "\n." result) "multiline result")
+		   (and result (listp result) "list result")
+		   (and result (string-match-p "\n." result) "multiline result")
 		   (and (member "list" result-params) "`:results list'"))))
 	  (when warning
 	    (user-error "Inline error: %s cannot be used" warning))))
@@ -2847,7 +2850,8 @@ CONTEXT may be one of :tangle, :export or :eval."
 (defvar org-babel-expand-noweb-references--cache nil
   "Noweb reference cache used during expansion.")
 (defvar org-babel-expand-noweb-references--cache-buffer nil
-  "Cons of (buffer . modified-tick) cached by `org-babel-expand-noweb-references--cache'.")
+  "Cons (buffer . modified-tick) for cached noweb references.
+See `org-babel-expand-noweb-references--cache'.")
 (defun org-babel-expand-noweb-references (&optional info parent-buffer)
   "Expand Noweb references in the body of the current source code block.
 
@@ -3228,20 +3232,19 @@ Emacs shutdown."))
   (declare (indent 1) (debug t))
   (org-with-gensyms (params)
     `(let ((,params ,result-params))
-       (unless (member "none" ,params)
-	 (if (or (member "scalar" ,params)
-		 (member "verbatim" ,params)
-		 (member "html" ,params)
-		 (member "code" ,params)
-		 (member "pp" ,params)
-		 (member "file" ,params)
-		 (and (or (member "output" ,params)
-			  (member "raw"    ,params)
-			  (member "org"    ,params)
-			  (member "drawer" ,params))
-		      (not (member "table" ,params))))
-	     ,scalar-form
-	   ,@table-forms)))))
+       (if (or (member "scalar" ,params)
+	       (member "verbatim" ,params)
+	       (member "html" ,params)
+	       (member "code" ,params)
+	       (member "pp" ,params)
+	       (member "file" ,params)
+	       (and (or (member "output" ,params)
+			(member "raw"    ,params)
+			(member "org"    ,params)
+			(member "drawer" ,params))
+		    (not (member "table" ,params))))
+	   ,scalar-form
+	 ,@table-forms))))
 
 (defun org-babel-temp-file (prefix &optional suffix)
   "Create a temporary file in the `org-babel-temporary-directory'.

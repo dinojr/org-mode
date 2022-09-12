@@ -49,6 +49,10 @@
 ;;  #+end_src
 
 ;;; Code:
+
+(require 'org-macs)
+(org-assert-version)
+
 (require 'ob-core)
 (require 'org-macs)
 (require 'cl-lib)
@@ -124,12 +128,14 @@ Emacs Lisp representation of the value of the variable."
       (save-excursion
 	(let ((case-fold-search t)
 	      args new-refere new-header-args new-referent split-file split-ref
-	      index)
+	      index contents)
 	  ;; if ref is indexed grab the indices -- beware nested indices
-	  (when (and (string-match "\\[\\([^\\[]+\\)\\]$" ref)
+	  (when (and (string-match "\\[\\([^\\[]*\\)\\]$" ref)
 		     (let ((str (substring ref 0 (match-beginning 0))))
 		       (= (cl-count ?\( str) (cl-count ?\) str))))
-	    (setq index (match-string 1 ref))
+            (if (> (length (match-string 1 ref)) 0)
+	        (setq index (match-string 1 ref))
+              (setq contents t))
 	    (setq ref (substring ref 0 (match-beginning 0))))
 	  ;; assign any arguments to pass to source block
 	  (when (string-match
@@ -153,7 +159,7 @@ Emacs Lisp representation of the value of the variable."
 	    (setq ref split-ref))
 	  (org-with-wide-buffer
 	   (goto-char (point-min))
-	   (let* ((params (append args '((:results . "silent"))))
+	   (let* ((params (append args '((:results . "none"))))
 		  (regexp (org-babel-named-data-regexp-for-name ref))
 		  (result
 		   (catch :found
@@ -171,7 +177,7 @@ Emacs Lisp representation of the value of the variable."
 				(throw :found
 				       (org-babel-execute-src-block
 					nil (org-babel-lob-get-info e) params)))
-			       (`src-block
+			       ((and `src-block (guard (not contents)))
 				(throw :found
 				       (org-babel-execute-src-block
 					nil nil

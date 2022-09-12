@@ -140,6 +140,9 @@ backend.  From now on, using =outline-*= functions is strongly
 discouraged when working with Org files.
 
 ** New features
+*** Clock table can now produce quarterly reports
+
+=:step= clock table parameter can now be set to =quarter=.
 
 *** Interactive commands now support escaping text inside comment blocks
 
@@ -270,7 +273,38 @@ example,
 
 prints a sub-bibliography containing the book entries with =ai= among
 their keywords.
+*** New =:filetitle= option for clock table
+
+The =:filetitle= option for clock tables can be set to ~t~ to show org
+file title (set by =#+title:=) in the File column instead of the
+file name.  For example:
+
+#+begin_src org
+,#+BEGIN: clocktable :scope agenda :maxlevel 2 :block thisweek :filetitle t
+#+end_src
+
+If a file does not have a title, the table will show the file name
+instead.
+*** New =org-md-toplevel-hlevel= variable for Markdown export
+
+The =org-md-toplevel-hlevel= customization variable sets the heading
+level used for top level headings, much like how
+=org-html-toplevel-hlevel= sets the heading level used for top level
+headings in HTML export.
+*** Babel: new syntax to pass the contents of a src block as argument
+
+Use the header argument =:var x=code-block[]= or
+: #+CALL: fn(x=code-block[])
+to pass the contents of a named code block as a string argument.
+
 ** New options
+*** New custom settings =org-icalendar-scheduled-summary-prefix= and =org-icalendar-deadline-summary-prefix=
+
+These settings allow users to define prefixes for exported summary
+lines in ICS exports.  The customization can be used to disable
+the prefixes completely or make them a little bit more verbose
+(e.g. "Deadline: " instead of the default "DL: ").
+
 *** A new custom setting =org-hide-drawer-startup= to control initial folding state of drawers
 
 Previously, all the drawers were always folded when opening an Org
@@ -431,6 +465,30 @@ prompting for a link description.  It can be a string (used as-is) or
 a function (called with the same arguments as
 ~org-make-link-description-function~ to return a string to use).
 
+An example of a such function for =info:= links is
+~org-info-description-as-command~.  To access a manual section outside
+of Org, description may be pasted to shell prompt or evaluated withing
+Emacs using =M-:= (wrapped into parenthesis).  For example,
+description of the =info:org#Tags= link is =info "(org) Tags"=.  To
+restore earlier behavior add to your Emacs init file the following:
+#+begin_src elisp :results silent :eval never-export
+  (with-eval-after-load 'ol-info
+    (org-link-set-parameters "info" :insert-description nil))
+#+end_src
+
+*** New list of languages for LaTeX export: ~org-latex-language-alist~ 
+
+~org-latex-language-alist~ unifies into a single list the old language
+lists for the =babel= and =polyglossia= LaTeX packages:
+~org-latex-babel-language-alist~ and
+~org-latex-polyglossia-language-alist~, respectively, which are
+declared obsolete.
+
+This new list captures the current state of art regarding language
+support in LaTeX.  The new =babel= syntax for loading languages via
+=ini= files and the new command =\babelprovide= (see:
+https://mirrors.ctan.org/macros/latex/required/babel/base/babel.pdf)
+are also supported.
 * Version 9.5
 
 ** Important announcements and breaking changes

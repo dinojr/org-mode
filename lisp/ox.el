@@ -72,6 +72,9 @@
 
 ;;; Code:
 
+(require 'org-macs)
+(org-assert-version)
+
 (require 'cl-lib)
 (require 'ob-exp)
 (require 'oc)
@@ -2085,8 +2088,8 @@ keywords before output."
 
 ;;;; Hooks
 
-(defvar org-export-before-processing-hook nil
-  "Hook run at the beginning of the export process.
+(defvar org-export-before-processing-functions nil
+  "Abnormal hook run at the beginning of the export process.
 
 This is run before include keywords and macros are expanded and
 Babel code blocks executed, on a copy of the original buffer
@@ -2096,8 +2099,8 @@ is at the beginning of the buffer.
 Every function in this hook will be called with one argument: the
 back-end currently used, as a symbol.")
 
-(defvar org-export-before-parsing-hook nil
-  "Hook run before parsing an export buffer.
+(defvar org-export-before-parsing-functions nil
+  "Abnormal hook run before parsing an export buffer.
 
 This is run after include keywords and macros have been expanded
 and Babel code blocks executed, on a copy of the original buffer
@@ -4305,7 +4308,7 @@ A search cell follows the pattern (TYPE . SEARCH) where
     - target's or radio-target's name as a list of strings if
       TYPE is `target'.
 
-    - NAME affiliated keyword if TYPE is `other'.
+    - NAME or RESULTS affiliated keyword if TYPE is `other'.
 
 A search cell is the internal representation of a fuzzy link.  It
 ignores white spaces and statistics cookies, if applicable."
@@ -4323,7 +4326,8 @@ ignores white spaces and statistics cookies, if applicable."
 		(and custom-id (cons 'custom-id custom-id)))))))
     (`target
      (list (cons 'target (split-string (org-element-property :value datum)))))
-    ((and (let name (org-element-property :name datum))
+    ((and (let name (or (org-element-property :name datum)
+                        (car (org-element-property :results datum))))
 	  (guard name))
      (list (cons 'other (split-string name))))
     (_ nil)))
@@ -4355,8 +4359,9 @@ Return value can be an object or an element:
 
 - If LINK path matches a target object (i.e. <<path>>) return it.
 
-- If LINK path exactly matches the name affiliated keyword
-  (i.e. #+NAME: path) of an element, return that element.
+- If LINK path exactly matches the name or results affiliated keyword
+  (i.e. #+NAME: path or #+RESULTS: name) of an element, return that
+  element.
 
 - If LINK path exactly matches any headline name, return that
   element.
@@ -6537,7 +6542,7 @@ to send the output file through additional processing, e.g,
     (let ((outfile (org-export-output-file-name \".tex\" subtreep)))
       (org-export-to-file \\='latex outfile
         async subtreep visible-only body-only ext-plist
-        #'org-latex-compile)))
+        #\\='org-latex-compile)))
 
 When expressed as an anonymous function, using `lambda',
 POST-PROCESS needs to be quoted.

@@ -29,9 +29,12 @@
 
 ;;; Code:
 
+
 (require 'cl-lib)
 (require 'seq)
 (require 'org-macs)
+
+(org-assert-version)
 
 (declare-function org-agenda-diary-entry "org-agenda")
 (declare-function org-agenda-maybe-redo "org-agenda" ())
@@ -221,6 +224,16 @@ extension beyond end of line was not controllable."
 (define-obsolete-function-alias 'org-babel-edit-distance 'org-string-distance
   "9.5")
 
+(unless (fboundp 'with-connection-local-variables)
+  ;; Added in Emacs 27: commit:21f54feee8, 2019-03-09.
+  ;; Redefining it using the old function `with-connection-local-profiles'.
+  (defmacro with-connection-local-variables (&rest body)
+    "Apply connection-local variables according to `default-directory'.
+Execute BODY, and unwind connection-local variables."
+    (declare (debug t))
+    `(with-connection-local-profiles (connection-local-get-profiles)
+       ,@body)))
+
 
 ;;; Emacs < 26.1 compatibility
 
@@ -318,6 +331,10 @@ Counting starts at 1."
 (define-obsolete-function-alias 'org-string-match-p 'string-match-p "9.0")
 
 ;;;; Functions and variables from previous releases now obsolete.
+(define-obsolete-variable-alias 'org-export-before-processing-hook
+  'org-export-before-processing-functions "Org 9.6")
+(define-obsolete-variable-alias 'org-export-before-parsing-hook
+  'org-export-before-parsing-functions "Org 9.6")
 (define-obsolete-function-alias 'org-element-remove-indentation
   'org-remove-indentation "9.0")
 (define-obsolete-variable-alias 'org-latex-create-formula-image-program
@@ -1209,7 +1226,7 @@ To get rid of the restriction, use `\\[org-agenda-remove-restriction-lock]'."
   (require 'org-agenda)
   (let (p m tp np dir txt)
     (cond
-     ((setq p (text-property-any (point-at-bol) (point-at-eol)
+     ((setq p (text-property-any (line-beginning-position) (line-end-position)
 				 'org-imenu t))
       (setq m (get-text-property p 'org-imenu-marker))
       (with-current-buffer (marker-buffer m)
@@ -1219,7 +1236,7 @@ To get rid of the restriction, use `\\[org-agenda-remove-restriction-lock]'."
 			 (overlays-at (point))))
 	    (org-agenda-remove-restriction-lock 'noupdate)
 	  (org-agenda-set-restriction-lock 'subtree))))
-     ((setq p (text-property-any (point-at-bol) (point-at-eol)
+     ((setq p (text-property-any (line-beginning-position) (line-end-position)
 				 'speedbar-function 'speedbar-find-file))
       (setq tp (previous-single-property-change
 		(1+ p) 'speedbar-function)
@@ -1236,7 +1253,7 @@ To get rid of the restriction, use `\\[org-agenda-remove-restriction-lock]'."
 	(org-agenda-set-restriction-lock 'file)))
      (t (user-error "Don't know how to restrict Org mode agenda")))
     (move-overlay org-speedbar-restriction-lock-overlay
-		  (point-at-bol) (point-at-eol))
+		  (line-beginning-position) (line-end-position))
     (setq current-prefix-arg nil)
     (org-agenda-maybe-redo)))
 
@@ -1456,69 +1473,70 @@ key."
 ;; Folding in outline-mode is not compatible with org-mode folding
 ;; anymore. Working around to avoid breakage of external packages
 ;; assuming the compatibility.
-(defadvice outline-flag-region (around outline-flag-region@fix-for-org-fold (from to flag) activate)
+(define-advice outline-flag-region (:around (oldfun from to flag &rest extra) fix-for-org-fold)
   "Run `org-fold-region' when in org-mode."
-  (if (eq major-mode 'org-mode)
-      (setq ad-return-value (org-fold-region (max from (point-min)) (min to (point-max)) flag 'headline))
-    ad-do-it))
+  (if (derived-mode-p 'org-mode)
+      (org-fold-region (max from (point-min)) (min to (point-max)) flag 'headline)
+    ;; Apply EXTRA to avoid breakages if adviced function definition
+    ;; changes.
+    (apply oldfun from to flag extra)))
 
-(defadvice outline-next-visible-heading (around outline-next-visible-heading@fix-for-org-fold (arg) activate)
+(define-advice outline-next-visible-heading (:around (oldfun arg &rest extra) fix-for-org-fold)
   "Run `org-next-visible-heading' when in org-mode."
-  (interactive "p")
-  (if (eq major-mode 'org-mode)
-      (setq ad-return-value (org-next-visible-heading arg))
-    ad-do-it))
+  (if (derived-mode-p 'org-mode)
+      (org-next-visible-heading arg)
+    ;; Apply EXTRA to avoid breakages if adviced function definition
+    ;; changes.
+    (apply oldfun arg extra)))
 
-(defadvice outline-back-to-heading (around outline-back-to-heading@fix-for-org-fold (&optional invisible-ok) activate)
+(define-advice outline-back-to-heading (:around (oldfun &optional invisible-ok &rest extra) fix-for-org-fold)
   "Run `org-back-to-heading' when in org-mode."
-  (if (eq major-mode 'org-mode)
-      (setq ad-return-value
-            (progn
-              (beginning-of-line)
-              (or (org-at-heading-p (not invisible-ok))
-                  (let (found)
-	            (save-excursion
-	              (while (not found)
-	                (or (re-search-backward (concat "^\\(?:" outline-regexp "\\)")
-				                nil t)
-                            (signal 'outline-before-first-heading nil))
-	                (setq found (and (or invisible-ok (not (org-fold-folded-p)))
-			                 (point)))))
-	            (goto-char found)
-	            found))))
-    ad-do-it))
+  (if (derived-mode-p 'org-mode)
+      (progn
+        (beginning-of-line)
+        (or (org-at-heading-p (not invisible-ok))
+            (let (found)
+	      (save-excursion
+	        (while (not found)
+	          (or (re-search-backward (concat "^\\(?:" outline-regexp "\\)")
+				          nil t)
+                      (signal 'outline-before-first-heading nil))
+	          (setq found (and (or invisible-ok (not (org-fold-folded-p)))
+			           (point)))))
+	      (goto-char found)
+	      found)))
+    ;; Apply EXTRA to avoid breakages if adviced function definition
+    ;; changes.
+    (apply oldfun invisible-ok extra)))
 
-(defadvice outline-on-heading-p (around outline-on-heading-p@fix-for-org-fold (&optional invisible-ok) activate)
+(define-advice outline-on-heading-p (:around (oldfun &optional invisible-ok &rest extra) fix-for-org-fold)
   "Run `org-at-heading-p' when in org-mode."
-  (if (eq major-mode 'org-mode)
-      (setq ad-return-value (org-at-heading-p (not invisible-ok)))
-    ad-do-it))
+  (if (derived-mode-p 'org-mode)
+      (org-at-heading-p (not invisible-ok))
+    ;; Apply EXTRA to avoid breakages if adviced function definition
+    ;; changes.
+    (apply oldfun invisible-ok extra)))
 
-(defadvice outline-hide-sublevels (around outline-hide-sublevels@fix-for-org-fold (levels) activate)
+(define-advice outline-hide-sublevels (:around (oldfun levels &rest extra) fix-for-org-fold)
   "Run `org-fold-hide-sublevels' when in org-mode."
-  (interactive (list
-		(cond
-		 (current-prefix-arg (prefix-numeric-value current-prefix-arg))
-		 ((save-excursion (beginning-of-line)
-				  (looking-at outline-regexp))
-		  (funcall outline-level))
-		 (t 1))))
-  (if (eq major-mode 'org-mode)
-      (setq ad-return-value (org-fold-hide-sublevels levels))
-    ad-do-it))
+  (if (derived-mode-p 'org-mode)
+      (org-fold-hide-sublevels levels)
+    ;; Apply EXTRA to avoid breakages if adviced function definition
+    ;; changes.
+    (apply oldfun levels extra)))
 
-(defadvice outline-toggle-children (around outline-toggle-children@fix-for-org-fold () activate)
+(define-advice outline-toggle-children (:around (oldfun &rest extra) fix-for-org-fold)
   "Run `org-fold-hide-sublevels' when in org-mode."
-  (interactive)
-  (if (eq major-mode 'org-mode)
-      (setq ad-return-value
-            (save-excursion
-              (org-back-to-heading)
-              (if (not (org-fold-folded-p (line-end-position)))
-                  (org-fold-hide-subtree)
-                (org-fold-show-children)
-                (org-fold-show-entry 'hide-drawers))))
-    ad-do-it))
+  (if (derived-mode-p 'org-mode)
+      (save-excursion
+        (org-back-to-heading)
+        (if (not (org-fold-folded-p (line-end-position)))
+            (org-fold-hide-subtree)
+          (org-fold-show-children)
+          (org-fold-show-entry 'hide-drawers)))
+    ;; Apply EXTRA to avoid breakages if adviced function definition
+    ;; changes.
+    (apply oldfun extra)))
 
 ;; TODO: outline-headers-as-kill
 

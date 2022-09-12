@@ -34,6 +34,47 @@
 (require 'cl-lib)
 (require 'format-spec)
 
+;;; Org version verification.
+
+(defmacro org-assert-version ()
+  "Assert compile time and runtime verstion match."
+  `(unless (equal (org-git-version) ,(org-git-version))
+     (warn "Org version mismatch.  Make sure that correct `load-path' is set early in init.el
+This warning usually appears when a built-in Org version is loaded
+prior to the more recent Org version.
+
+Version mismatch is commonly encountered in the following situations:
+1. Emacs is loaded using literate Org config and more recent Org
+   version is loaded inside the file loaded by `org-babel-load-file'.
+   `org-babel-load-file' triggers the built-in Org version clashing
+   the newer Org version attempted to be loaded later.
+
+   It is recommended to move the Org loading code before the
+   `org-babel-load-file' call.
+
+2. New Org version is loaded manually by setting `load-path', but some
+   other package depending on Org is loaded before the `load-path' is
+   configured.
+   This \"other package\" is triggering built-in Org version, again
+   causing the version mismatch.
+
+   It is recommended to set `load-path' as early in the config as
+   possible.
+
+3. New Org version is loaded using straight.el package manager and
+   other package depending on Org is loaded before straight triggers
+   loading of the newer Org version.
+
+   It is recommended to put
+    (straight-use-package 'org)
+   early in the config.  Ideally, right after the straight.el
+   bootstrap.  Moving `use-package' :straight declaration may not be
+   sufficient if the corresponding `use-package' statement is
+   deferring the loading.")
+     (error "Org version mismatch.  Make sure that correct `load-path' is set early in init.el")))
+
+(org-assert-version)
+
 (declare-function org-mode "org" ())
 (declare-function org-agenda-files "org" (&optional unrestricted archives))
 (declare-function org-fold-show-context "org-fold" (&optional key))
@@ -1021,7 +1062,8 @@ Return width in pixels when PIXELS is non-nil."
                     current-char-property-alias-alist)
         (let (pixel-width symbol-width)
           (with-silent-modifications
-            (setf (buffer-string) string)
+            (erase-buffer)
+            (insert string)
             (setq pixel-width
                   (if (get-buffer-window (current-buffer))
                       (car (window-text-pixel-size
@@ -1030,7 +1072,8 @@ Return width in pixels when PIXELS is non-nil."
                     (car (window-text-pixel-size
                           nil (line-beginning-position) (point-max)))))
             (unless pixels
-              (setf (buffer-string) "a")
+              (erase-buffer)
+              (insert "a")
               (setq symbol-width
                     (if (get-buffer-window (current-buffer))
                         (car (window-text-pixel-size
@@ -1060,7 +1103,8 @@ removed.  Return the new string.  If STRING is nil, return nil."
   (and string
        (if (and (string-prefix-p pre string)
 		(string-suffix-p post string))
-	   (substring string (length pre) (- (length post)))
+	   (substring string (length pre)
+                      (and (not (string-equal "" post)) (- (length post))))
 	 string)))
 
 (defun org-strip-quotes (string)
@@ -1197,39 +1241,24 @@ so values can contain further %-escapes if they are define later in TABLE."
 				   org-emphasis t)
   "Properties to remove when a string without properties is wanted.")
 
-(defvar org-fold-core--force-fontification)
-(defmacro org-with-forced-fontification (&rest body)
-  "Run BODY forcing fontification of folded regions."
-  (declare (debug (form body)) (indent 1))
-  `(unwind-protect
-       (progn
-         (setq org-fold-core--force-fontification t)
-         ,@body)
-     (setq org-fold-core--force-fontification nil)))
-
 (defun org-buffer-substring-fontified (beg end)
   "Return fontified region between BEG and END."
   (when (bound-and-true-p jit-lock-mode)
-    (org-with-forced-fontification
-        (when (or (text-property-not-all beg end 'org-fold-core-fontified t)
-                  (text-property-not-all beg end 'fontified t))
-          (save-match-data (font-lock-fontify-region beg end)))))
+    (when (text-property-not-all beg end 'fontified t)
+      (save-excursion (save-match-data (font-lock-fontify-region beg end)))))
   (buffer-substring beg end))
 
 (defun org-looking-at-fontified (re)
   "Call `looking-at' RE and make sure that the match is fontified."
   (prog1 (looking-at re)
     (when (bound-and-true-p jit-lock-mode)
-      (org-with-forced-fontification
-          (when (or (text-property-not-all
-                     (match-beginning 0) (match-end 0)
-                     'org-fold-core-fontified t)
-                    (text-property-not-all
-                     (match-beginning 0) (match-end 0)
-                     'fontified t))
-            (save-match-data
-              (font-lock-fontify-region (match-beginning 0)
-                                (match-end 0))))))))
+      (when (text-property-not-all
+             (match-beginning 0) (match-end 0)
+             'fontified t)
+        (save-excursion
+          (save-match-data
+            (font-lock-fontify-region (match-beginning 0)
+                              (match-end 0))))))))
 
 (defsubst org-no-properties (s &optional restricted)
   "Remove all text properties from string S.
@@ -1259,11 +1288,11 @@ the value in cadr."
 
 (defsubst org-get-at-bol (property)
   "Get text property PROPERTY at the beginning of line."
-  (get-text-property (point-at-bol) property))
+  (get-text-property (line-beginning-position) property))
 
 (defun org-get-at-eol (property n)
   "Get text property PROPERTY at the end of line less N characters."
-  (get-text-property (- (point-at-eol) n) property))
+  (get-text-property (- (line-end-position) n) property))
 
 (defun org-find-text-property-in-string (prop s)
   "Return the first non-nil value of property PROP in string S."
@@ -1272,7 +1301,7 @@ the value in cadr."
 			 prop s)))
 
 ;; FIXME: move to org-fold?
-(defun org-invisible-p--text-properties (&optional pos folding-only)
+(defun org-invisible-p (&optional pos folding-only)
   "Non-nil if the character after POS is invisible.
 If POS is nil, use `point' instead.  When optional argument
 FOLDING-ONLY is non-nil, only consider invisible parts due to
@@ -1282,25 +1311,6 @@ fontification."
     (cond ((not value) nil)
 	  (folding-only (org-fold-folded-p (or pos (point))))
 	  (t value))))
-(defun org-invisible-p--overlays (&optional pos folding-only)
-  "Non-nil if the character after POS is invisible.
-If POS is nil, use `point' instead.  When optional argument
-FOLDING-ONLY is non-nil, only consider invisible parts due to
-folding of a headline, a block or a drawer, i.e., not because of
-fontification."
-  (let ((value (get-char-property (or pos (point)) 'invisible)))
-    (cond ((not value) nil)
-	  (folding-only (memq value '(org-hide-block outline)))
-	  (t (and (invisible-p (or pos (point))) value)))))
-(defsubst org-invisible-p (&optional pos folding-only)
-  "Non-nil if the character after POS is invisible.
-If POS is nil, use `point' instead.  When optional argument
-FOLDING-ONLY is non-nil, only consider invisible parts due to
-folding of a headline, a block or a drawer, i.e., not because of
-fontification."
-  (if (eq org-fold-core-style 'text-properties)
-      (org-invisible-p--text-properties pos folding-only)
-    (org-invisible-p--overlays pos folding-only)))
 
 (defun org-truly-invisible-p ()
   "Check if point is at a character currently not visible.
@@ -1324,37 +1334,17 @@ move it back by one char before doing this check."
    (and (org-invisible-p beg)
         (org-invisible-p (org-fold-next-visibility-change beg end)))))
 
-(defun org-find-visible--overlays ()
-  "Return closest visible buffer position, or `point-max'."
-  (if (org-invisible-p)
-      (next-single-char-property-change (point) 'invisible)
-    (point)))
-(defun org-find-visible--text-properties ()
+(defun org-find-visible ()
   "Return closest visible buffer position, or `point-max'."
   (if (org-invisible-p)
       (org-fold-next-visibility-change (point))
     (point)))
-(defsubst org-find-visible ()
-  "Return closest visible buffer position, or `point-max'."
-  (if (eq org-fold-core-style 'text-properties)
-      (org-find-visible--text-properties)
-    (org-find-visible--overlays)))
 
-(defun org-find-invisible--overlays ()
-  "Return closest invisible buffer position, or `point-max'."
-  (if (org-invisible-p)
-      (point)
-    (next-single-char-property-change (point) 'invisible)))
-(defun org-find-invisible--text-properties ()
+(defun org-find-invisible ()
   "Return closest invisible buffer position, or `point-max'."
   (if (org-invisible-p)
       (point)
     (org-fold-next-visibility-change (point))))
-(defsubst org-find-invisible ()
-  "Return closest invisible buffer position, or `point-max'."
-  (if (eq org-fold-core-style 'text-properties)
-      (org-find-invisible--text-properties)
-    (org-find-invisible--overlays)))
 
 
 ;;; Time
@@ -1402,40 +1392,38 @@ nil, just return 0."
 	(b (org-2ft b)))
     (and (> a 0) (> b 0) (\= a b))))
 
-(if (version< emacs-version "27.1")
-    (defmacro org-encode-time (&rest time)
-      (if (cdr time)
-          `(encode-time ,@time)
-        `(apply #'encode-time ,@time)))
-  (if (ignore-errors (with-no-warnings (encode-time '(0 0 0 1 1 1971))))
-      (defmacro org-encode-time (&rest time)
-        (pcase (length time) ; Emacs-29 since d75e2c12eb
-          (1 `(encode-time ,@time))
-          ((or 6 9) `(encode-time (list ,@time)))
-          (_ (error "`org-encode-time' may be called with 1, 6, or 9 arguments but %d given"
-                    (length time)))))
-    (defmacro org-encode-time (&rest time)
-      (pcase (length time)
-        (1 `(encode-time ,@time))
-        (6 `(encode-time (list ,@time nil -1 nil)))
-        (9 `(encode-time (list ,@time)))
-        (_ (error "`org-encode-time' may be called with 1, 6, or 9 arguments but %d given"
-                  (length time)))))))
-(put 'org-encode-time 'function-documentation
-     "Compatibility and convenience helper for `encode-time'.
-May be called with 9 components list (SECONDS ... YEAR IGNORED DST ZONE)
-as the recommended way since Emacs-27 or with 6 or 9 separate arguments
+(defmacro org-encode-time (&rest time)
+  "Compatibility and convenience helper for `encode-time'.
+TIME may be a 9 components list (SECONDS ... YEAR IGNORED DST ZONE)
+as the recommended way since Emacs-27 or 6 or 9 separate arguments
 similar to the only possible variant for Emacs-26 and earlier.
-6 elements list as the only argument causes wrong type argument till Emacs-29.
+6 elements list as the only argument causes wrong type argument till
+Emacs-29.
 
 Warning: use -1 for DST to guess the actual value, nil means no
 daylight saving time and may be wrong at particular time.
 
 DST value is ignored prior to Emacs-27.  Since Emacs-27 DST value matters
 even when multiple arguments is passed to this macro and such
-behavior is different from `encode-time'. See
+behavior is different from `encode-time'.  See
 Info node `(elisp)Time Conversion' for details and caveats,
-preferably the latest version.")
+preferably the latest version."
+  (if (version< emacs-version "27.1")
+      (if (cdr time)
+          `(encode-time ,@time)
+        `(apply #'encode-time ,@time))
+    (if (ignore-errors (with-no-warnings (encode-time '(0 0 0 1 1 1971))))
+        (pcase (length time) ; Emacs-29 since d75e2c12eb
+          (1 `(encode-time ,@time))
+          ((or 6 9) `(encode-time (list ,@time)))
+          (_ (error "`org-encode-time' may be called with 1, 6, or 9 arguments but %d given"
+                    (length time))))
+      (pcase (length time)
+        (1 `(encode-time ,@time))
+        (6 `(encode-time (list ,@time nil -1 nil)))
+        (9 `(encode-time (list ,@time)))
+        (_ (error "`org-encode-time' may be called with 1, 6, or 9 arguments but %d given"
+                  (length time)))))))
 
 (defun org-parse-time-string (s &optional nodefault)
   "Parse Org time string S.

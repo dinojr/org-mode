@@ -27,6 +27,9 @@
 
 ;;; Code:
 
+(require 'org-macs)
+(org-assert-version)
+
 (require 'org-compat)
 (require 'org-macs)
 (require 'org-fold)
@@ -678,7 +681,7 @@ followed by another \"%[A-F0-9]{2}\" group."
 		  (cons 6 128))))
 	  (when (>= val 192) (setq eat (car shift-xor)))
 	  (setq val (logxor val (cdr shift-xor)))
-	  (setq sum (+ (lsh sum (car shift-xor)) val))
+	  (setq sum (+ (ash sum (car shift-xor)) val))
 	  (when (> eat 0) (setq eat (- eat 1)))
 	  (cond
 	   ((= 0 eat)			;multi byte
@@ -1491,24 +1494,11 @@ If the link is in hidden text, expose it."
     (org-fold-core-set-folding-spec-property (car org-link--link-folding-spec) :visible t)))
 
 ;;;###autoload
-(defun org-toggle-link-display--overlays ()
-  "Toggle the literal or descriptive display of links."
-  (interactive)
-  (if org-link-descriptive (remove-from-invisibility-spec '(org-link))
-    (add-to-invisibility-spec '(org-link)))
-  (org-restart-font-lock)
-  (setq org-link-descriptive (not org-link-descriptive)))
-(defun org-toggle-link-display--text-properties ()
+(defun org-toggle-link-display ()
   "Toggle the literal or descriptive display of links in current buffer."
   (interactive)
   (setq org-link-descriptive (not org-link-descriptive))
   (org-link-descriptive-ensure))
-(defsubst org-toggle-link-display ()
-  "Toggle the literal or descriptive display of links."
-  (interactive)
-  (if (eq org-fold-core-style 'text-properties)
-      (org-toggle-link-display--text-properties)
-    (org-toggle-link-display--overlays)))
 
 ;;;###autoload
 (defun org-store-link (arg &optional interactive?)
@@ -1539,7 +1529,7 @@ non-nil."
 	(let ((end (region-end)))
 	  (goto-char (region-beginning))
 	  (set-mark (point))
-	  (while (< (point-at-eol) end)
+	  (while (< (line-end-position) end)
 	    (move-end-of-line 1) (activate-mark)
 	    (let (current-prefix-arg)
 	      (call-interactively 'org-store-link))
@@ -1888,7 +1878,12 @@ Use TAB to complete link prefixes, then RET for type-specific completion support
 		   "Link: "
 		   (append
 		    (mapcar (lambda (x) (concat x ":")) all-prefixes)
-		    (mapcar #'car org-stored-links))
+		    (mapcar #'car org-stored-links)
+                    ;; Allow description completion.  Avoid "nil" option
+                    ;; in the case of `completing-read-default' and
+                    ;; an error in `ido-completing-read' when some links
+                    ;; have no description.
+                    (delq nil (mapcar 'cadr org-stored-links)))
 		   nil nil nil
 		   'org-link--history
 		   (caar org-stored-links)))
