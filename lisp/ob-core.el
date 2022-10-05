@@ -144,8 +144,7 @@ used."
   :type 'string
   :safe (lambda (v)
 	  (and (stringp v)
-	       (eq (compare-strings "RESULTS" nil nil v nil nil t)
-		   t))))
+	       (org-string-equal-ignore-case "RESULTS" v))))
 
 (defcustom org-babel-noweb-wrap-start "<<"
   "String used to begin a noweb reference in a code block.
@@ -500,13 +499,13 @@ arguments, imagine you'd like to set the file name output of a
 latex source block to a sha1 of its contents.  We could achieve
 this with:
 
-(defun org-src-sha ()
-  (let ((elem (org-element-at-point)))
-    (concat (sha1 (org-element-property :value elem)) \".svg\")))
+  (defun org-src-sha ()
+    (let ((elem (org-element-at-point)))
+      (concat (sha1 (org-element-property :value elem)) \".svg\")))
 
-(setq org-babel-default-header-args:latex
-      `((:results . \"file link replace\")
-        (:file . (lambda () (org-src-sha)))))
+  (setq org-babel-default-header-args:latex
+        `((:results . \"file link replace\")
+          (:file . (lambda () (org-src-sha)))))
 
 Because the closure is evaluated with point at the source block,
 the call to `org-element-at-point' above will always retrieve
@@ -715,7 +714,7 @@ a list with the following pattern:
                 ; and `org-babel-read'
 
 ;;;###autoload
-(defun org-babel-execute-src-block (&optional arg info params)
+(defun org-babel-execute-src-block (&optional arg info params executor-type)
   "Execute the current source code block and return the result.
 Insert the results of execution into the buffer.  Source code
 execution and the collection and formatting of results can be
@@ -729,13 +728,29 @@ Optionally supply a value for INFO in the form returned by
 
 Optionally supply a value for PARAMS which will be merged with
 the header arguments specified at the front of the source code
-block."
+block.
+
+EXECUTOR-TYPE is the type of the org element responsible for the
+execution of the source block.  If not provided then informed
+guess will be made."
   (interactive)
   (let* ((org-babel-current-src-block-location
-	  (or org-babel-current-src-block-location
-	      (nth 5 info)
-	      (org-babel-where-is-src-block-head)))
-	 (info (if info (copy-tree info) (org-babel-get-src-block-info))))
+          (or org-babel-current-src-block-location
+              (nth 5 info)
+              (org-babel-where-is-src-block-head)))
+         (info (if info (copy-tree info) (org-babel-get-src-block-info)))
+         (executor-type
+          (or executor-type
+              ;; If `executor-type' is unset, then we will make an
+              ;; informed guess.
+              (pcase (char-after org-babel-current-src-block-location)
+                (?s 'inline-src-block)
+                (?c 'inline-babel-call)
+                (?# (pcase (char-after (+ 2 org-babel-current-src-block-location))
+                      (?b 'src-block)
+                      (?c 'call-block)
+                      (_ 'unknown)))
+                (_ 'unknown)))))
     ;; Merge PARAMS with INFO before considering source block
     ;; evaluation since both could disagree.
     (cl-callf org-babel-merge-params (nth 2 info) params)
@@ -773,14 +788,23 @@ block."
 		       (make-directory d 'parents)
 		       d))))
 		 (cmd (intern (concat "org-babel-execute:" lang)))
-		 result)
+		 result exec-start-time)
 	    (unless (fboundp cmd)
 	      (error "No org-babel-execute function for %s!" lang))
-	    (message "executing %s code block%s..."
+	    (message "executing %s %s %s..."
 		     (capitalize lang)
+                     (pcase executor-type
+                       ('src-block "code block")
+                       ('inline-src-block "inline code block")
+                       ('babel-call "call")
+                       ('inline-babel-call "inline call")
+                       (e (symbol-name e)))
 		     (let ((name (nth 4 info)))
-		       (if name (format " (%s)" name) "")))
-	    (setq result
+		       (if name
+                           (format "(%s)" name)
+                         (format "at position %d" (nth 5 info)))))
+	    (setq exec-start-time (current-time)
+                  result
 		  (let ((r (funcall cmd body params)))
 		    (if (and (eq (cdr (assq :result-type params)) 'value)
 			     (or (member "vector" result-params)
@@ -823,7 +847,8 @@ block."
 	      (if (member "none" result-params)
 		  (message "result silenced")
 	        (org-babel-insert-result
-	         result result-params info new-hash lang)))
+	         result result-params info new-hash lang
+                 (time-subtract (current-time) exec-start-time))))
 	    (run-hooks 'org-babel-after-execute-hook)
 	    result)))))))
 
@@ -1956,11 +1981,11 @@ region is not active then the point is demarcated."
            (save-excursion
              (goto-char place)
              (let ((lang (nth 0 info))
-                   (indent (make-string (current-indentation) ?\s)))
+                   (indent (make-string (org-current-text-indentation) ?\s)))
 	       (when (string-match "^[[:space:]]*$"
-				   (buffer-substring (line-beginning-position)
-						     (line-end-position)))
-		 (delete-region (line-beginning-position) (line-end-position)))
+                                   (buffer-substring (line-beginning-position)
+                                                     (line-end-position)))
+                 (delete-region (line-beginning-position) (line-end-position)))
                (insert (concat
 			(if (looking-at "^") "" "\n")
 			indent (if upper-case-p "#+END_SRC\n" "#+end_src\n")
@@ -2234,7 +2259,7 @@ If the path of the link is a file path it is expanded using
       ;; scalar result
       (funcall echo-res result))))
 
-(defun org-babel-insert-result (result &optional result-params info hash lang)
+(defun org-babel-insert-result (result &optional result-params info hash lang exec-time)
   "Insert RESULT into the current buffer.
 
 By default RESULT is inserted after the end of the current source
@@ -2242,7 +2267,8 @@ block.  The RESULT of an inline source block usually will be
 wrapped inside a `results' macro and placed on the same line as
 the inline source block.  The macro is stripped upon export.
 Multiline and non-scalar RESULTS from inline source blocks are
-not allowed.  With optional argument RESULT-PARAMS controls
+not allowed.  When EXEC-TIME is provided it may be included in a
+generated message.  With optional argument RESULT-PARAMS controls
 insertion of results in the Org mode file.  RESULT-PARAMS can
 take the following values:
 
@@ -2465,7 +2491,7 @@ INFO may provide the values of these header arguments (in the
 		       ;; Escape contents from "export" wrap.  Wrap
 		       ;; inline results within an export snippet with
 		       ;; appropriate value.
-		       ((eq t (compare-strings type nil nil "export" nil nil t))
+		       ((org-string-equal-ignore-case type "export")
 			(let ((backend (pcase split
 					 (`(,_) "none")
 					 (`(,_ ,b . ,_) b))))
@@ -2476,14 +2502,14 @@ INFO may provide the values of these header arguments (in the
 					   backend) "@@)}}}")))
 		       ;; Escape contents from "example" wrap.  Mark
 		       ;; inline results as verbatim.
-		       ((eq t (compare-strings type nil nil "example" nil nil t))
+		       ((org-string-equal-ignore-case type "example")
 			(funcall wrap
 				 opening-line closing-line
 				 nil nil
 				 "{{{results(=" "=)}}}"))
 		       ;; Escape contents from "src" wrap.  Mark
 		       ;; inline results as inline source code.
-		       ((eq t (compare-strings type nil nil "src" nil nil t))
+		       ((org-string-equal-ignore-case type "src")
 			(let ((inline-open
 			       (pcase split
 				 (`(,_)
@@ -2547,11 +2573,18 @@ INFO may provide the values of these header arguments (in the
 			   (not (and (listp result)
 				     (member "append" result-params))))
 		  (indent-rigidly beg end indent))
-		(if (null result)
-		    (if (member "value" result-params)
-			(message "Code block returned no value.")
-		      (message "Code block produced no output."))
-		  (message "Code block evaluation complete.")))
+                (let ((time-info
+                       ;; Only show the time when something other than
+                       ;; 0s will be shown, i.e. check if the time is at
+                       ;; least half of the displayed precision.
+                       (if (and exec-time (> (float-time exec-time) 0.05))
+                           (format " (took %.1fs)" (float-time exec-time))
+                         "")))
+                  (if (null result)
+                      (if (member "value" result-params)
+                          (message "Code block returned no value%s." time-info)
+                        (message "Code block produced no output%s." time-info))
+                    (message "Code block evaluation complete%s." time-info))))
 	    (set-marker end nil)
 	    (when outside-scope (narrow-to-region visible-beg visible-end))
 	    (set-marker visible-beg nil)
@@ -2706,7 +2739,7 @@ specified as an an \"attachment:\" style link."
     (unless (eq (org-element-type element) 'src-block)
       (error "Not in a source block"))
     (goto-char (org-babel-where-is-src-block-head element))
-    (let* ((ind (current-indentation))
+    (let* ((ind (org-current-text-indentation))
 	   (body-start (line-beginning-position 2))
 	   (body (org-element-normalize-string
 		  (if (or org-src-preserve-indentation
@@ -2850,7 +2883,7 @@ CONTEXT may be one of :tangle, :export or :eval."
 (defvar org-babel-expand-noweb-references--cache nil
   "Noweb reference cache used during expansion.")
 (defvar org-babel-expand-noweb-references--cache-buffer nil
-  "Cons (buffer . modified-tick) for cached noweb references.
+  "Cons (BUFFER . MODIFIED-TICK) for cached noweb references.
 See `org-babel-expand-noweb-references--cache'.")
 (defun org-babel-expand-noweb-references (&optional info parent-buffer)
   "Expand Noweb references in the body of the current source code block.
@@ -2994,7 +3027,8 @@ block but are passed literally to the \"example-block\"."
 		      ;; run.  Yet, ID is not in cache (see the above
 		      ;; condition).  Process missing reference in
 		      ;; `expand-references'.
-		      ((hash-table-p org-babel-expand-noweb-references--cache)
+		      ((and (hash-table-p org-babel-expand-noweb-references--cache)
+                            (gethash 'buffer-processed org-babel-expand-noweb-references--cache))
 		       (expand-references id))
 		      ;; Though luck.  We go into the long process of
 		      ;; checking each source block and expand those
@@ -3010,6 +3044,7 @@ block but are passed literally to the \"example-block\"."
 			    (let* ((info (org-babel-get-src-block-info t))
 				   (ref (cdr (assq :noweb-ref (nth 2 info)))))
 			      (push info (gethash ref org-babel-expand-noweb-references--cache))))))
+                       (puthash 'buffer-processed t org-babel-expand-noweb-references--cache)
 		       (expand-references id)))))
 	       ;; Interpose PREFIX between every line.
                (if noweb-prefix
@@ -3194,33 +3229,25 @@ additionally processed by `shell-quote-argument'."
   (let ((f (org-babel-local-file-name (expand-file-name name))))
     (if no-quote-p f (shell-quote-argument f))))
 
-(defvar org-babel-temporary-directory)
-(unless (or noninteractive (boundp 'org-babel-temporary-directory))
-  (defvar org-babel-temporary-directory
-    (or (and (boundp 'org-babel-temporary-directory)
-	     (file-exists-p org-babel-temporary-directory)
-	     org-babel-temporary-directory)
-	(make-temp-file "babel-" t))
-    "Directory to hold temporary files created to execute code blocks.
+(defvar org-babel-temporary-directory
+  (unless noninteractive
+    (make-temp-file "babel-" t))
+  "Directory to hold temporary files created to execute code blocks.
 Used by `org-babel-temp-file'.  This directory will be removed on
-Emacs shutdown."))
+Emacs shutdown.")
 
-(defvar org-babel-temporary-stable-directory)
-(unless (or noninteractive (boundp 'org-babel-temporary-stable-directory))
-  (defvar org-babel-temporary-stable-directory
-    (or (and (boundp 'org-babel-temporary-stable-directory)
-	     (file-exists-p org-babel-temporary-stable-directory)
-	     org-babel-temporary-stable-directory)
-        (let (dir)
-          (while (or (not dir) (file-exists-p dir))
-            (setq dir (expand-file-name
-                       (format "babel-stable-%d" (random 1000))
-                       (temporary-file-directory))))
-          (make-directory dir)
-          dir))
-    "Directory to hold temporary files created to execute code blocks.
+(defvar org-babel-temporary-stable-directory
+  (unless noninteractive
+    (let (dir)
+      (while (or (not dir) (file-exists-p dir))
+        (setq dir (expand-file-name
+                   (format "babel-stable-%d" (random 1000))
+                   (temporary-file-directory))))
+      (make-directory dir)
+      dir))
+  "Directory to hold temporary files created to execute code blocks.
 Used by `org-babel-temp-file'.  This directory will be removed on
-Emacs shutdown."))
+Emacs shutdown.")
 
 (defcustom org-babel-remote-temporary-directory "/tmp/"
   "Directory to hold temporary files on remote hosts."
@@ -3258,7 +3285,7 @@ of `org-babel-temporary-directory'."
 		      prefix org-babel-remote-temporary-directory))))
         (make-temp-file prefix nil suffix))
     (let ((temporary-file-directory
-	   (or (and (boundp 'org-babel-temporary-directory)
+	   (or (and org-babel-temporary-directory
 		    (file-exists-p org-babel-temporary-directory)
 		    org-babel-temporary-directory)
 	       temporary-file-directory)))
@@ -3277,7 +3304,7 @@ constructed like the following: PREFIXDATAhashSUFFIX."
         (with-temp-file path)
         path)
     (let* ((temporary-file-directory
-	    (or (and (boundp 'org-babel-temporary-stable-directory)
+	    (or (and org-babel-temporary-stable-directory
 		     (file-exists-p org-babel-temporary-stable-directory)
 		     org-babel-temporary-stable-directory)
 	        temporary-file-directory))
@@ -3290,7 +3317,7 @@ constructed like the following: PREFIXDATAhashSUFFIX."
 
 (defun org-babel-remove-temporary-directory ()
   "Remove `org-babel-temporary-directory' on Emacs shutdown."
-  (when (and (boundp 'org-babel-temporary-directory)
+  (when (and org-babel-temporary-directory
 	     (file-exists-p org-babel-temporary-directory))
     ;; taken from `delete-directory' in files.el
     (condition-case nil
@@ -3307,13 +3334,12 @@ constructed like the following: PREFIXDATAhashSUFFIX."
 	  (delete-directory org-babel-temporary-directory))
       (error
        (message "Failed to remove temporary Org-babel directory %s"
-		(if (boundp 'org-babel-temporary-directory)
-		    org-babel-temporary-directory
-		  "[directory not defined]"))))))
+		(or org-babel-temporary-directory
+		    "[directory not defined]"))))))
 
 (defun org-babel-remove-temporary-stable-directory ()
   "Remove `org-babel-temporary-stable-directory' and on Emacs shutdown."
-  (when (and (boundp 'org-babel-temporary-stable-directory)
+  (when (and org-babel-temporary-stable-directory
 	     (file-exists-p org-babel-temporary-stable-directory))
     (let ((org-babel-temporary-directory
            org-babel-temporary-stable-directory))

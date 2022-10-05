@@ -37,17 +37,25 @@
 ;;; Org version verification.
 
 (defmacro org-assert-version ()
-  "Assert compile time and runtime verstion match."
-  `(unless (equal (org-git-version) ,(org-git-version))
+  "Assert compile time and runtime version match."
+  ;; We intentionally use a more permissive `org-release' instead of
+  ;; `org-git-version' to work around deficiencies in Elisp
+  ;; compilation after pulling latest changes.  Unchanged files will
+  ;; not be re-compiled and thus their macro-expanded
+  ;; `org-assert-version' calls would fail using strict
+  ;; `org-git-version' check because the generated Org version strings
+  ;; will not match.
+  `(unless (equal (org-release) ,(org-release))
      (warn "Org version mismatch.  Make sure that correct `load-path' is set early in init.el
 This warning usually appears when a built-in Org version is loaded
 prior to the more recent Org version.
 
 Version mismatch is commonly encountered in the following situations:
+
 1. Emacs is loaded using literate Org config and more recent Org
    version is loaded inside the file loaded by `org-babel-load-file'.
    `org-babel-load-file' triggers the built-in Org version clashing
-   the newer Org version attempted to be loaded later.
+   the newer Org version attempt to be loaded later.
 
    It is recommended to move the Org loading code before the
    `org-babel-load-file' call.
@@ -73,16 +81,20 @@ Version mismatch is commonly encountered in the following situations:
    deferring the loading.")
      (error "Org version mismatch.  Make sure that correct `load-path' is set early in init.el")))
 
-(org-assert-version)
+;; We rely on org-macs when generating Org version.  Checking Org
+;; version here will interfere with Org build process.
+;; (org-assert-version)
 
 (declare-function org-mode "org" ())
 (declare-function org-agenda-files "org" (&optional unrestricted archives))
+(declare-function org-time-string-to-seconds "org" (s))
 (declare-function org-fold-show-context "org-fold" (&optional key))
 (declare-function org-fold-save-outline-visibility "org-fold" (use-markers &rest body))
 (declare-function org-fold-next-visibility-change "org-fold" (&optional pos limit ignore-hidden-p previous-p))
 (declare-function org-fold-core-with-forced-fontification "org-fold" (&rest body))
 (declare-function org-fold-folded-p "org-fold" (&optional pos limit ignore-hidden-p previous-p))
 (declare-function string-collate-lessp "org-compat" (s1 s2 &optional locale ignore-case))
+(declare-function org-time-convert-to-integer "org-compat" (time))
 
 (defvar org-ts-regexp0)
 (defvar ffap-url-regexp)
@@ -301,15 +313,16 @@ If EXCLUDE-TMP is non-nil, ignore temporary buffers."
 
 (defun org-file-newer-than-p (file time)
   "Non-nil if FILE is newer than TIME.
-FILE is a filename, as a string, TIME is a list of integers, as
+FILE is a filename, as a string, TIME is a Lisp time value, as
 returned by, e.g., `current-time'."
   (and (file-exists-p file)
        ;; Only compare times up to whole seconds as some file-systems
        ;; (e.g. HFS+) do not retain any finer granularity.  As
        ;; a consequence, make sure we return non-nil when the two
        ;; times are equal.
-       (not (time-less-p (cl-subseq (nth 5 (file-attributes file)) 0 2)
-			 (cl-subseq time 0 2)))))
+       (not (time-less-p (org-time-convert-to-integer
+			  (nth 5 (file-attributes file)))
+			 (org-time-convert-to-integer time)))))
 
 (defun org-compile-file (source process ext &optional err-msg log-buf spec)
   "Compile a SOURCE file using PROCESS.
@@ -375,6 +388,11 @@ it for output."
 
 ;;; Indentation
 
+(defmacro org-current-text-indentation ()
+  "Like `current-indentation', but ignore display/invisible properties."
+  `(let ((buffer-invisibility-spec nil))
+     (current-indentation)))
+
 (defun org-do-remove-indentation (&optional n skip-fl)
   "Remove the maximum common indentation from the buffer.
 When optional argument N is a positive integer, remove exactly
@@ -389,7 +407,7 @@ line.  Return nil if it fails."
 		   (save-excursion
                      (when skip-fl (forward-line))
 		     (while (re-search-forward "^[ \t]*\\S-" nil t)
-		       (let ((ind (current-indentation)))
+		       (let ((ind (org-current-text-indentation)))
 			 (if (zerop ind) (throw :exit nil)
 			   (setq min-ind (min min-ind ind))))))
 		   min-ind))))

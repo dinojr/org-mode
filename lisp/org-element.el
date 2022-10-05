@@ -126,7 +126,15 @@ Key is located in match group 1.")
 Style, if any, is located in match group 1.")
 
 (defconst org-element-clock-line-re
-  (rx line-start (0+ (or ?\t ?\s)) "CLOCK:")
+  (rx line-start (0+ (or ?\t ?\s))
+      "CLOCK: "
+      (regexp org-ts-regexp-inactive)
+      (opt "--"
+           (regexp org-ts-regexp-inactive)
+           (1+ (or ?\t ?\s)) "=>" (1+ (or ?\t ?\s))
+           (1+ digit) ":" digit digit)
+      (0+ (or ?\t ?\s))
+      line-end)
   "Regexp matching a clock line.")
 
 (defconst org-element-comment-string "COMMENT"
@@ -219,7 +227,7 @@ specially in `org-element--object-lex'.")
 		;; LaTeX environments.
 		"\\\\begin{\\([A-Za-z0-9*]+\\)}" "\\|"
 		;; Clock lines.
-		"CLOCK:" "\\|"
+		org-element-clock-line-re "\\|"
 		;; Lists.
 		(let ((term (pcase org-plain-list-ordered-item-terminator
 			      (?\) ")") (?. "\\.") (_ "[.)]")))
@@ -1616,7 +1624,7 @@ CONTENTS is the contents of the element."
 	   ;; At a new item: end previous sibling.
 	   ((looking-at item-re)
 	    (let ((ind (save-excursion (skip-chars-forward " \t")
-				       (current-column))))
+				       (org-current-text-column))))
 	      (setq top-ind (min top-ind ind))
 	      (while (and items (<= ind (nth 1 (car items))))
 		(let ((item (pop items)))
@@ -1650,7 +1658,7 @@ CONTENTS is the contents of the element."
 	   (t
 	    (let ((ind (save-excursion
 			 (skip-chars-forward " \t")
-			 (current-column)))
+			 (org-current-text-column)))
 		  (end (save-excursion
 			 (skip-chars-backward " \r\t\n")
 			 (line-beginning-position 2))))
@@ -2414,7 +2422,7 @@ CDR is a plist containing `:key', `:value', `:begin', `:end',
 	  (key (progn (looking-at "[ \t]*#\\+\\(\\S-*\\):")
 		      (upcase (match-string-no-properties 1))))
 	  (value (org-trim (buffer-substring-no-properties
-			    (match-end 0) (line-end-position))))
+                            (match-end 0) (line-end-position))))
 	  (pos-before-blank (progn (forward-line) (point)))
 	  (end (progn (skip-chars-forward " \r\t\n" limit)
 		      (if (eobp) (point) (line-beginning-position)))))
@@ -2952,8 +2960,8 @@ CONTENTS is verse block contents."
   "Parse emphasis object at point, if any.
 
 MARK is the delimiter string used.  TYPE is a symbol among
-‘bold’, ‘code’, ‘italic’, ‘strike-through’, ‘underline’, and
-‘verbatim’.
+`bold', `code', `italic', `strike-through', `underline', and
+`verbatim'.
 
 Assume point is at first MARK."
   (save-excursion
@@ -5357,7 +5365,7 @@ This extra caching is based on the following paper:
 Pugh [Information Processing Letters] (1990) Slow optimally balanced
  search strategies vs. cached fast uniformly balanced search
  strategies.  http://dx.doi.org/10.1016/0020-0190(90)90130-P
- 
+
 Also, see `org-element--cache-hash-left' and `org-element--cache-hash-right'.")
 (defvar-local org-element--cache-hash-left nil
   "Cached elements from `org-element--cache' for fast O(1) lookup.
@@ -5679,12 +5687,17 @@ This function assumes `org-element--headline-cache' is a valid AVL tree."
 
 ;;;; Tools
 
+;; FIXME: Ideally, this should be inlined to avoid overheads, but
+;; inlined functions should be declared before the code that uses them
+;; and some code above does use `org-element--cache-active-p'.  Moving this
+;; declaration on top would require restructuring the whole cache
+;; section.
 (defun org-element--cache-active-p (&optional called-from-cache-change-func-p)
   "Non-nil when cache is active in current buffer."
   (and org-element-use-cache
        org-element--cache
-       (derived-mode-p 'org-mode)
        (or called-from-cache-change-func-p
+           (eq org-element--cache-change-tic (buffer-chars-modified-tick))
            (and
             ;; org-num-mode calls some Org structure analysis functions
             ;; that can trigger cache update in the middle of changes.  See
@@ -5699,8 +5712,7 @@ This function assumes `org-element--headline-cache' is a valid AVL tree."
             ;; `combine-change-calls' because the buffer is potentially
             ;; changed without notice (the change will be registered
             ;; after exiting the `combine-change-calls' body though).
-            (memq #'org-element--cache-after-change after-change-functions))
-           (eq org-element--cache-change-tic (buffer-chars-modified-tick)))))
+            (memq #'org-element--cache-after-change after-change-functions)))))
 
 ;; FIXME: Remove after we establish that hashing is effective.
 (defun org-element-cache-hash-show-statistics ()
@@ -5710,7 +5722,7 @@ This extra caching is based on the following paper:
 Pugh [Information Processing Letters] (1990) Slow optimally balanced
  search strategies vs. cached fast uniformly balanced search
  strategies.  http://dx.doi.org/10.1016/0020-0190(90)90130-P
- 
+
 Also, see `org-element--cache-size'."
   (interactive)
   (message "%.2f%% of cache searches hashed, %.2f%% non-hashable."
@@ -5953,15 +5965,17 @@ actually submitted."
       ;; Do not sync when, for example, in the middle of
       ;; `combine-change-calls'.  See the commentary inside
       ;; `org-element--cache-active-p'.
-      (when (org-element--cache-active-p)
+      (when (and org-element--cache-sync-requests (org-element--cache-active-p))
         ;; Check if the buffer have been changed outside visibility of
         ;; `org-element--cache-before-change' and `org-element--cache-after-change'.
         (if (/= org-element--cache-last-buffer-size (buffer-size))
             (progn
               (org-element--cache-warn
-               "Unregistered buffer modifications detected. Resetting.
+               "Unregistered buffer modifications detected (%S != %S). Resetting.
 If this warning appears regularly, please report the warning text to Org mode mailing list (M-x org-submit-bug-report).
 The buffer is: %s\n Current command: %S\n Backtrace:\n%S"
+               org-element--cache-last-buffer-size
+               (buffer-size)
                (buffer-name (current-buffer))
                this-command
                (when (and (fboundp 'backtrace-get-frames)
@@ -6301,7 +6315,7 @@ completing the request."
                       ;; Consider scenario when DATA lays within
                       ;; sensitive lines of PARENT that was found
                       ;; during phase 2.  For example:
-                      ;; 
+                      ;;
                       ;; #+ begin_quote
                       ;; Paragraph
                       ;; #+end_quote
@@ -7095,11 +7109,6 @@ change, as an integer."
   "Verify correctness of ELEMENT when `org-element--cache-self-verify' is non-nil.
 
 Return non-nil when verification failed."
-  ;; Verify correct parent for the element.
-  (unless (or (org-element-property :parent element)
-              (eq 'org-data (org-element-type element)))
-    (org-element--cache-warn "Got element without parent (cache active?: %S). Please report it to Org mode mailing list (M-x org-submit-bug-report).\n%S" (org-element--cache-active-p)  element)
-    (org-element-cache-reset))
   (let ((org-element--cache-self-verify
          (or org-element--cache-self-verify
              (and (boundp 'org-batch-test) org-batch-test)))
@@ -7107,10 +7116,14 @@ Return non-nil when verification failed."
          (if (and (boundp 'org-batch-test) org-batch-test)
              1
            org-element--cache-self-verify-frequency)))
+    ;; Verify correct parent for the element.
+    (unless (or (not org-element--cache-self-verify)
+                (org-element-property :parent element)
+                (eq 'org-data (org-element-type element)))
+      (org-element--cache-warn "Got element without parent (cache active?: %S). Please report it to Org mode mailing list (M-x org-submit-bug-report).\n%S" (org-element--cache-active-p)  element)
+      (org-element-cache-reset))
     (when (and org-element--cache-self-verify
                (org-element--cache-active-p)
-               (derived-mode-p 'org-mode)
-               (org-element-property :parent element)
                (eq 'headline (org-element-type element))
                ;; Avoid too much slowdown
                (< (random 1000) (* 1000 org-element--cache-self-verify-frequency)))
@@ -7599,7 +7612,7 @@ the cache."
                             (move-start-to-next-match
                              (if last-match next-re fail-re)))
                           (when (and (or (not start) (eq (org-element-property :begin data) start))
-                                     (< (org-element-property :begin data) to-pos)) 
+                                     (< (org-element-property :begin data) to-pos))
                             ;; Calculate where next possible element
                             ;; starts and update START if needed.
 		            (setq start (next-element-start))
@@ -7620,7 +7633,7 @@ the cache."
                             (when (or (not restrict-elements)
                                       (memq (org-element-type data) restrict-elements))
                               ;; DATA matches restriction.  FUNC may
-                              ;; 
+                              ;;
                               ;; Call FUNC.  FUNC may move point.
                               (setq org-element-cache-map-continue-from nil)
                               (if org-element--cache-map-statistics

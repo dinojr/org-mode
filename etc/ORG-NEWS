@@ -143,6 +143,12 @@ discouraged when working with Org files.
 *** Clock table can now produce quarterly reports
 
 =:step= clock table parameter can now be set to =quarter=.
+*** Publishing now supports links to encrypted Org files
+
+Links to other published Org files are automatically converted to the
+corresponding html links.  Now, this feature is also available when
+links point to encrypted Org files, like
+=[[file:foo.org.gpg::Heading]]=.
 
 *** Interactive commands now support escaping text inside comment blocks
 
@@ -233,7 +239,7 @@ produce results superior to Minted or Listings.
 *** Support for =#+include=-ing URLs
 
 =#+include: FILE= will now accept URLs as the file.
-*** Structure templates now respect case used in ~org-structure-template-alist~ 
+*** Structure templates now respect case used in ~org-structure-template-alist~
 
 The block type in ~org-structure-template-alist~ is not case-sensitive.
 When the block type starts from the upper case, structure template
@@ -296,6 +302,17 @@ headings in HTML export.
 Use the header argument =:var x=code-block[]= or
 : #+CALL: fn(x=code-block[])
 to pass the contents of a named code block as a string argument.
+*** New property =ORG-IMAGE-ACTUAL-WIDTH= for overriding global ~org-image-actual-width~
+
+The new property =ORG-IMAGE-ACTUAL-WIDTH= can override the global
+variable ~org-image-actual-width~ value for inline images display width.
+
+*** New ~org-babel-tangle-finished-hook~ hook run at the very end of ~org-babel-tangle~
+
+This provides a proper counterpart to ~org-babel-pre-tangle-hook~, as
+~org-babel-post-tangle-hook~ is run
+per-tangle-destination. ~org-babel-tangle-finished-hook~ is just run
+once after the post tangle hooks.
 
 ** New options
 *** New custom settings =org-icalendar-scheduled-summary-prefix= and =org-icalendar-deadline-summary-prefix=
@@ -331,7 +348,7 @@ The folding state can also be controlled on per-file basis using
 *** New custom setting ~org-icalendar-force-alarm~
 
 The new setting, when set to non-nil, makes Org create alarm at the
-event time when the alarm time is set to 0.  The default value is 
+event time when the alarm time is set to 0.  The default value is
 nil -- do not create alarms at the event time.
 
 ** New functions and changes in function arguments
@@ -476,7 +493,7 @@ restore earlier behavior add to your Emacs init file the following:
     (org-link-set-parameters "info" :insert-description nil))
 #+end_src
 
-*** New list of languages for LaTeX export: ~org-latex-language-alist~ 
+*** New list of languages for LaTeX export: ~org-latex-language-alist~
 
 ~org-latex-language-alist~ unifies into a single list the old language
 lists for the =babel= and =polyglossia= LaTeX packages:
@@ -489,6 +506,13 @@ support in LaTeX.  The new =babel= syntax for loading languages via
 =ini= files and the new command =\babelprovide= (see:
 https://mirrors.ctan.org/macros/latex/required/babel/base/babel.pdf)
 are also supported.
+*** Texinfo exports include LaTeX
+
+With the new customization option ~org-texinfo-with-latex~ set to (its
+default value) ~'detect~, if the system runs Texinfo 6.8 (3 July 2021)
+or newer, Org will export all LaTeX fragments and environments using
+Texinfo ~@math~ and ~@displaymath~ commands respectively.
+
 * Version 9.5
 
 ** Important announcements and breaking changes

@@ -570,11 +570,23 @@ This works for both table types.")
   (concat "\\(" "@[-0-9I$]+" "\\|" "[a-zA-Z]\\{1,2\\}\\([0-9]+\\|&\\)" "\\)")
   "Match a reference that needs translation, for reference display.")
 
-(defconst org-table-separator-space
+(defconst org-table--separator-space-pre
   (propertize " " 'display '(space :relative-width 1))
-  "Space used around fields when aligning the table.
+  "Space used in front of fields when aligning the table.
 This space serves as a segment separator for the purposes of the
-bidirectional reordering.")
+bidirectional reordering.
+Note that `org-table--separator-space-pre' is not `eq' to
+`org-table--separator-space-post'.  This is done to prevent Emacs from
+visually merging spaces in an empty table cell.  See bug#45915.")
+
+(defconst org-table--separator-space-post
+  (propertize " " 'display '(space :relative-width 1.001))
+  "Space used after fields when aligning the table.
+This space serves as a segment separator for the purposes of the
+bidirectional reordering.
+Note that `org-table--separator-space-pre' is not `eq' to
+`org-table--separator-space-post'.  This is done to prevent Emacs from
+visually merging spaces in an empty table cell.  See bug#45915.")
 
 
 ;;; Internal Variables
@@ -829,7 +841,7 @@ SIZE is a string Columns x Rows like for example \"3x2\"."
 	 (line (concat (apply 'concat indent "|" (make-list columns "  |"))
 		       "\n")))
     (if (string-match "^[ \t]*$" (buffer-substring-no-properties
-				  (line-beginning-position) (point)))
+                                  (line-beginning-position) (point)))
 	(beginning-of-line 1)
       (newline))
     ;; (mapcar (lambda (x) (insert line)) (make-list rows t))
@@ -1163,7 +1175,7 @@ When ALIGN is set, also realign the table."
       (goto-char (org-table-begin))
       (while (and (re-search-forward org-table-dataline-regexp end t)
 		  (setq cnt (1+ cnt))
-		  (< (line-end-position) pos))))
+                  (< (line-end-position) pos))))
     cnt))
 
 (defun org-table-current-column ()
@@ -1326,7 +1338,7 @@ However, when FORCE is non-nil, create new columns if necessary."
   (beginning-of-line 1)
   (when (> n 0)
     (while (and (> (setq n (1- n)) -1)
-		(or (search-forward "|" (line-end-position) t)
+                (or (search-forward "|" (line-end-position) t)
 		    (and force
 			 (progn (end-of-line 1)
 				(skip-chars-backward "^|")
@@ -1667,7 +1679,7 @@ With prefix ABOVE, insert above the current line."
     (org-table-align))
   (org-table-with-shrunk-columns
    (let ((line (org-table-clean-line
-		(buffer-substring (line-beginning-position) (line-end-position))))
+                (buffer-substring (line-beginning-position) (line-end-position))))
 	 (col (current-column)))
      (while (string-match "|\\( +\\)|" line)
        (setq line (replace-match
@@ -1716,7 +1728,8 @@ In particular, this does handle wide and invisible characters."
 	(dline (and (not (org-match-line org-table-hline-regexp))
 		    (org-table-current-dline))))
     (org-table-with-shrunk-columns
-     (kill-region (line-beginning-position) (min (1+ (line-end-position)) (point-max)))
+     (kill-region (line-beginning-position)
+                  (min (1+ (line-end-position)) (point-max)))
      (if (not (org-at-table-p)) (beginning-of-line 0))
      (org-move-to-column col)
      (when (and dline
@@ -2257,14 +2270,15 @@ For all numbers larger than LIMIT, shift them by DELTA."
 		 (format "@%d\\$[0-9]+=.*?\\(::\\|$\\)" remove))))
 	    s n a)
 	(when remove
-	  (while (re-search-forward re2 (line-end-position) t)
-	    (unless (save-match-data (org-in-regexp "remote([^)]+?)"))
-	      (if (equal (char-before (match-beginning 0)) ?.)
-		  (user-error
-		   "Change makes TBLFM term %s invalid, use undo to recover"
-		   (match-string 0))
-		(replace-match "")))))
-	(while (re-search-forward re (line-end-position) t)
+          (save-excursion
+            (while (re-search-forward re2 (line-end-position) t)
+	      (unless (save-match-data (org-in-regexp "remote([^)]+?)"))
+	        (if (equal (char-before (match-beginning 0)) ?.)
+		    (user-error
+		     "Change makes TBLFM term %s invalid, use undo to recover"
+		     (match-string 0))
+		  (replace-match ""))))))
+        (while (re-search-forward re (line-end-position) t)
 	  (unless (save-match-data (org-in-regexp "remote([^)]+?)"))
 	    (setq s (match-string 1) n (string-to-number s))
 	    (cond
@@ -3790,8 +3804,9 @@ FACE, when non-nil, for the highlight."
     (let ((id 0) (ih 0) hline eol str ov)
       (goto-char (org-table-begin))
       (while (org-at-table-p)
-	(setq eol (line-end-position))
-	(setq ov (make-overlay (line-beginning-position) (1+ (line-beginning-position))))
+        (setq eol (line-end-position))
+        (setq ov (make-overlay (line-beginning-position)
+                               (1+ (line-beginning-position))))
 	(push ov org-table-coordinate-overlays)
 	(setq hline (looking-at org-table-hline-regexp))
 	(setq str (if hline (format "I*%-2d" (setq ih (1+ ih)))
@@ -3889,7 +3904,7 @@ mouse onto the overlay.
 
 When optional argument PRE is non-nil, assume the overlay is
 located at the beginning of the field, and prepend
-`org-table-separator-space' to it.  Otherwise, concatenate
+`org-table--separator-space-pre' to it.  Otherwise, concatenate
 `org-table-shrunk-column-indicator' at its end.
 
 Return the overlay."
@@ -3908,7 +3923,7 @@ Return the overlay."
     ;; Make sure overlays stays on top of table coordinates overlays.
     ;; See `org-table-overlay-coordinates'.
     (overlay-put o 'priority 1)
-    (let ((d (if pre (concat org-table-separator-space display)
+    (let ((d (if pre (concat org-table--separator-space-pre display)
 	       (concat display org-table-shrunk-column-indicator))))
       (org-overlay-display o d 'org-table t))
     o))
@@ -4321,11 +4336,11 @@ FIELD is a string.  WIDTH is a number.  ALIGN is either \"c\",
 		   ("r" (make-string spaces ?\s))
 		   ("c" (make-string (/ spaces 2) ?\s))))
 	 (suffix (make-string (- spaces (length prefix)) ?\s)))
-    (concat org-table-separator-space
+    (concat org-table--separator-space-pre
 	    prefix
 	    field
 	    suffix
-	    org-table-separator-space)))
+	    org-table--separator-space-post)))
 
 (defun org-table-align ()
   "Align the table at point by aligning all vertical bars."

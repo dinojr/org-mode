@@ -64,14 +64,14 @@
 ;; Consider the following Org mode link:
 ;; [[file:/path/to/file/file.ext][description]]
 ;; Only the word "description" is normally visible in this link.
-;; 
+;;
 ;; The way this partial visibility is achieved is combining the two
 ;; folding specs.  The whole link is folded using 'org-fold-hidden
 ;; folding spec, but the visible part is additionally folded using
 ;; 'org-fold-visible:
 ;;
 ;; <begin org-fold-hidden>[[file:/path/to/file/file.ext][<begin org-fold-visible>description<end org-fold-visible>]]<end org-fold-hidden>
-;; 
+;;
 ;; Because 'org-fold-visible has higher priority than
 ;; 'org-fold-hidden, it suppresses the 'org-fold-hidden effect and
 ;; thus reveals the description part of the link.
@@ -285,7 +285,9 @@
 Can be either `text-properties' or `overlays'.
 The former is faster on large files, while the latter is generally
 less error-prone with regard to third-party packages that haven't yet
-adapted to the new folding implementation."
+adapted to the new folding implementation.
+
+Important: This variable must be set before loading Org."
   :group 'org
   :package-version '(Org . "9.6")
   :type '(choice
@@ -328,7 +330,7 @@ following symbols:
   of the folded regions may become visible for some external packages
   inserting text using `insert' instead of `insert-and-inherit' (the
   latter is rarely used in practice).
-  
+
 - `ignore-indirect': Do not decouple folding state in the indirect
   buffers.  This can speed up Emacs display engine (and thus motion of
   point), especially when large number of indirect buffers is being
@@ -461,7 +463,9 @@ If GLOBAL is non-nil, do not make the property unique in the BUFFER."
                     ;; Using buffer-name is safe, since the only place where
                     ;; buffer-local text property actually matters is an indirect
                     ;; buffer, where the name cannot be same anyway.
-                    (if global 'global
+                    (if (or global
+                            (memql 'ignore-indirect org-fold-core--optimise-for-huge-buffers))
+                        'global
                       (sxhash (buffer-name (or buffer (current-buffer)))))))))
 
 (defsubst org-fold-core-get-folding-spec-from-folding-prop (folding-prop)
@@ -623,9 +627,11 @@ unless RETURN-ONLY is non-nil."
 
 (defun org-fold-core-decouple-indirect-buffer-folds ()
   "Copy and decouple folding state in a newly created indirect buffer.
-This function is mostly indented to be used in `clone-indirect-buffer-hook'."
+This function is mostly intended to be used in
+`clone-indirect-buffer-hook'."
   (when (and (buffer-base-buffer)
-             (eq org-fold-core-style 'text-properties))
+             (eq org-fold-core-style 'text-properties)
+             (not (memql 'ignore-indirect org-fold-core--optimise-for-huge-buffers)))
     (org-fold-core--property-symbol-get-create (car (org-fold-core-folding-spec-list)))))
 
 ;;; API
@@ -1036,9 +1042,10 @@ from that position."
   `(org-with-wide-buffer
     (when ,override (org-fold-core-region (point-min) (point-max) nil))
     (pcase-dolist (`(,beg ,end ,spec) (delq nil ,regions))
-      (if ,relative
-          (org-fold-core-region (+ ,relative beg) (+ ,relative end) t spec)
-        (org-fold-core-region beg end t spec))
+      (let ((rel ,relative))
+        (if rel
+            (org-fold-core-region (+ rel beg) (+ rel end) t spec)
+          (org-fold-core-region beg end t spec)))
       (when ,clean-markers
         (when (markerp beg) (set-marker beg nil))
         (when (markerp end) (set-marker end nil))))))

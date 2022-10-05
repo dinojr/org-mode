@@ -34,7 +34,9 @@
 (require 'seq)
 (require 'org-macs)
 
-(org-assert-version)
+;; We rely on org-compat when generating Org version.  Checking Org
+;; version here will interfere with Org build process.
+;; (org-assert-version)
 
 (declare-function org-agenda-diary-entry "org-agenda")
 (declare-function org-agenda-maybe-redo "org-agenda" ())
@@ -43,7 +45,8 @@
 (declare-function org-calendar-goto-agenda "org-agenda" ())
 (declare-function org-align-tags "org" (&optional all))
 (declare-function org-at-heading-p "org" (&optional ignored))
-(declare-function org-at-table.el-p "org" ())
+(declare-function org-at-table.el-p "org-table" ())
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
 (declare-function org-element-at-point "org-element" (&optional pom cached-only))
 (declare-function org-element-at-point-no-context "org-element" (&optional pom))
 (declare-function org-element-context "org-element" (&optional element))
@@ -58,6 +61,7 @@
 (declare-function org-link-set-parameters "ol" (type &rest rest))
 (declare-function org-log-into-drawer "org" ())
 (declare-function org-make-tag-string "org" (tags))
+(declare-function org-next-visible-heading "org" (arg))
 (declare-function org-reduced-level "org" (l))
 (declare-function org-return "org" (&optional indent arg interactive))
 (declare-function org-fold-show-context "org-fold" (&optional key))
@@ -65,8 +69,16 @@
 (declare-function outline-next-heading "outline" ())
 (declare-function speedbar-line-directory "speedbar" (&optional depth))
 (declare-function table--at-cell-p "table" (position &optional object at-column))
+(declare-function org-fold-folded-p "org-fold" (&optional pos spec-or-alias))
+(declare-function org-fold-hide-sublevels "org-fold" (levels))
+(declare-function org-fold-hide-subtree "org-fold" ())
 (declare-function org-fold-region "org-fold" (from to flag &optional spec))
 (declare-function org-fold-show-all "org-fold" (&optional types))
+(declare-function org-fold-show-children "org-fold" (&optional level))
+(declare-function org-fold-show-entry "org-fold" (&optional hide-drawers))
+;; `org-string-equal-ignore-case' is in _this_ file but isn't at the
+;; top-level.
+(declare-function org-string-equal-ignore-case "org-compat" (string1 string2))
 
 (defvar calendar-mode-map)
 (defvar org-complex-heading-regexp)
@@ -107,6 +119,14 @@ the symbol of the calling function, for example."
       (when (not (equal attr cachedattr))
         (puthash sym attr org-file-has-changed-p--hash-table)))))
 
+(if (fboundp 'string-equal-ignore-case)
+    (defalias 'org-string-equal-ignore-case #'string-equal-ignore-case)
+  ;; From Emacs subr.el.
+  (defun org-string-equal-ignore-case (string1 string2)
+    "Like `string-equal', but case-insensitive.
+Upper-case and lower-case letters are treated as equal.
+Unibyte strings are converted to multibyte for comparison."
+    (eq t (compare-strings string1 0 nil string2 0 nil t))))
 
 
 ;;; Emacs < 28.1 compatibility
@@ -138,6 +158,38 @@ inserted before contatenating."
     "Return t if DIR names an existing directory containing no other files."
     (and (file-directory-p dir)
          (null (directory-files dir nil directory-files-no-dot-files-regexp t)))))
+
+(if (fboundp 'string-clean-whitespace)
+    (defalias 'org-string-clean-whitespace #'string-clean-whitespace)
+  ;; From Emacs subr-x.el.
+  (defun org-string-clean-whitespace (string)
+    "Clean up whitespace in STRING.
+All sequences of whitespaces in STRING are collapsed into a
+single space character, and leading/trailing whitespace is
+removed."
+    (let ((blank "[[:blank:]\r\n]+"))
+      (string-trim (replace-regexp-in-string blank " " string t t)
+                   blank blank))))
+
+(if (fboundp 'format-prompt)
+    (defalias 'org-format-prompt #'format-prompt)
+  ;; From Emacs minibuffer.el, inlining
+  ;; `minibuffer-default-prompt-format' value and replacing `length<'
+  ;; (both new in Emacs 28.1).
+  (defun org-format-prompt (prompt default &rest format-args)
+    "Compatibility substitute for `format-prompt'."
+    (concat
+     (if (null format-args)
+         prompt
+       (apply #'format prompt format-args))
+     (and default
+          (or (not (stringp default))
+              (> (length default) 0))
+          (format " (default %s)"
+                  (if (consp default)
+                      (car default)
+                    default)))
+     ": ")))
 
 
 ;;; Emacs < 27.1 compatibility
@@ -249,8 +301,7 @@ Execute BODY, and unwind connection-local variables."
   (defsubst file-attribute-modification-time (attributes)
     "The modification time in ATTRIBUTES returned by `file-attributes'.
 This is the time of the last change to the file's contents, and
-is a list of integers (HIGH LOW USEC PSEC) in the same style
-as (current-time)."
+is a Lisp timestamp in the same style as `current-time'."
     (nth 5 attributes)))
 
 (unless (fboundp 'file-attribute-size)
@@ -1253,7 +1304,7 @@ To get rid of the restriction, use `\\[org-agenda-remove-restriction-lock]'."
 	(org-agenda-set-restriction-lock 'file)))
      (t (user-error "Don't know how to restrict Org mode agenda")))
     (move-overlay org-speedbar-restriction-lock-overlay
-		  (line-beginning-position) (line-end-position))
+                  (line-beginning-position) (line-end-position))
     (setq current-prefix-arg nil)
     (org-agenda-maybe-redo)))
 
@@ -1331,10 +1382,8 @@ ELEMENT is the element at point."
 	  (and log
 	       (let ((drawer (org-element-lineage element '(drawer))))
 		 (and drawer
-		      (eq (compare-strings
-			   log nil nil
-			   (org-element-property :drawer-name drawer) nil nil t)
-			  t)))))
+		      (org-string-equal-ignore-case
+		       log (org-element-property :drawer-name drawer))))))
 	nil)
        (t
 	(cl-case (org-element-type element)

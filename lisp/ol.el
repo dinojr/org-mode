@@ -1529,7 +1529,7 @@ non-nil."
 	(let ((end (region-end)))
 	  (goto-char (region-beginning))
 	  (set-mark (point))
-	  (while (< (line-end-position) end)
+          (while (< (line-end-position) end)
 	    (move-end-of-line 1) (activate-mark)
 	    (let (current-prefix-arg)
 	      (call-interactively 'org-store-link))
@@ -1567,10 +1567,8 @@ non-nil."
 		  t))))
 	(setq link (plist-get org-store-link-plist :link))
         ;; If store function actually set `:description' property, use
-        ;; it, even if it is nil.  Otherwise, fallback to link value.
-	(setq desc (if (plist-member org-store-link-plist :description)
-                       (plist-get org-store-link-plist :description)
-		     link)))
+        ;; it, even if it is nil.  Otherwise, fallback to nil (ask user).
+	(setq desc (plist-get org-store-link-plist :description)))
 
        ;; Store a link from a remote editing buffer.
        ((org-src-edit-buffer-p)
@@ -1626,14 +1624,6 @@ non-nil."
 		 (org-encode-time 0 0 0 (nth 1 cd) (nth 0 cd) (nth 2 cd))))
 	  (org-link-store-props :type "calendar" :date cd)))
 
-       ((eq major-mode 'w3-mode)
-	(setq cpltxt (if (and (buffer-name)
-			      (not (string-match "Untitled" (buffer-name))))
-			 (buffer-name)
-		       (url-view-url t))
-	      link (url-view-url t))
-	(org-link-store-props :type "w3" :url (url-view-url t)))
-
        ((eq major-mode 'image-mode)
 	(setq cpltxt (concat "file:"
 			     (abbreviate-file-name buffer-file-name))
@@ -1659,24 +1649,23 @@ non-nil."
 
        ((and (buffer-file-name (buffer-base-buffer)) (derived-mode-p 'org-mode))
 	(org-with-limited-levels
-         (cond
-	  ;; Store a link using the target at point.
+	 (setq custom-id (org-entry-get nil "CUSTOM_ID"))
+	 (cond
+	  ;; Store a link using the target at point
 	  ((org-in-regexp "[^<]<<\\([^<>]+\\)>>[^>]" 1)
-	   (setq cpltxt
+	   (setq link
 		 (concat "file:"
 			 (abbreviate-file-name
 			  (buffer-file-name (buffer-base-buffer)))
 			 "::" (match-string 1))
-		 link cpltxt))
-          ;; Store a link using the CUSTOM_ID property.
-          ((setq custom-id (org-entry-get nil "CUSTOM_ID"))
-           (setq cpltxt
-		 (concat "file:"
-			 (abbreviate-file-name
-			  (buffer-file-name (buffer-base-buffer)))
-			 "::#" custom-id)
-		 link cpltxt))
-          ;; Store a link using (and perhaps creating) the ID property.
+                 ;; Target may be shortened when link is inserted.
+                 ;; Avoid [[target][file:~/org/test.org::target]]
+                 ;; links.  Maybe the case of identical target and
+                 ;; description should be handled by `org-insert-link'.
+                 cpltxt nil
+                 desc nil
+                 ;; Do not append #CUSTOM_ID link below.
+                 custom-id nil))
 	  ((and (featurep 'org-id)
 		(or (eq org-id-link-to-org-use-id t)
 		    (and interactive?
@@ -1685,13 +1674,12 @@ non-nil."
 				      'create-if-interactive-and-no-custom-id)
 				  (not custom-id))))
 		    (and org-id-link-to-org-use-id (org-entry-get nil "ID"))))
+	   ;; Store a link using the ID at point
 	   (setq link (condition-case nil
 			  (prog1 (org-id-store-link)
-			    (setq desc (or (plist-get org-store-link-plist
-						      :description)
-					   "")))
+			    (setq desc (plist-get org-store-link-plist :description)))
 			(error
-			 ;; Probably before first headline, link only to file.
+			 ;; Probably before first headline, link only to file
 			 (concat "file:"
 				 (abbreviate-file-name
 				  (buffer-file-name (buffer-base-buffer))))))))
@@ -1751,8 +1739,7 @@ non-nil."
 
       ;; We're done setting link and desc, clean up
       (when (consp link) (setq cpltxt (car link) link (cdr link)))
-      (setq link (or link cpltxt)
-	    desc (or desc cpltxt))
+      (setq link (or link cpltxt))
       (cond ((not desc))
 	    ((equal desc "NONE") (setq desc nil))
 	    (t (setq desc (org-link-display-format desc))))
@@ -1782,6 +1769,9 @@ The history can be used to select a link previously stored with
 press `RET' at the prompt), the link defaults to the most recently
 stored link.  As `SPC' triggers completion in the minibuffer, you need to
 use `M-SPC' or `C-q SPC' to force the insertion of a space character.
+Completion candidates include link descriptions.
+
+If there is a link under cursor then edit it.
 
 You will also be prompted for a description, and if one is given, it will
 be displayed in the buffer instead of the link.
@@ -1827,7 +1817,7 @@ non-interactively, don't allow to edit the default description."
 	 (all-prefixes (append (mapcar #'car abbrevs)
 			       (mapcar #'car org-link-abbrev-alist)
 			       (org-link-types)))
-         entry auto-desc)
+         entry)
     (cond
      (link-location)		      ; specified by arg, just use it.
      ((org-in-regexp org-link-bracket-re 1)
@@ -1890,8 +1880,7 @@ Use TAB to complete link prefixes, then RET for type-specific completion support
 	    (unless (org-string-nw-p link) (user-error "No link selected"))
 	    (dolist (l org-stored-links)
 	      (when (equal link (cadr l))
-		(setq link (car l))
-		(setq auto-desc t)))
+		(setq link (car l))))
 	    (when (or (member link all-prefixes)
 		      (and (equal ":" (substring link -1))
 			   (member (substring link 0 -1) all-prefixes)
@@ -1968,41 +1957,40 @@ Use TAB to complete link prefixes, then RET for type-specific completion support
 	  (when (equal desc origpath)
 	    (setq desc path)))))
 
-    (unless auto-desc
-      (let* ((type
-              (cond
-               ((and all-prefixes
-                     (string-match (rx-to-string `(: string-start (submatch (or ,@all-prefixes)) ":")) link))
-                (match-string 1 link))
-               ((file-name-absolute-p link) "file")
-               ((string-match "\\`\\.\\.?/" link) "file")))
-             (initial-input
-	      (cond
-	       (description)
-               (desc)
-               ((org-link-get-parameter type :insert-description)
-                (let ((def (org-link-get-parameter type :insert-description)))
-                  (condition-case nil
-                      (cond
-                       ((stringp def) def)
-                       ((functionp def)
-                        (funcall def link desc)))
-                    (error
-                     (message "Can't get link description from org link parameter `:insert-description': %S"
-			      def)
-		     (sit-for 2)
-                     nil))))
-	       (org-link-make-description-function
+    (let* ((type
+            (cond
+             ((and all-prefixes
+                   (string-match (rx-to-string `(: string-start (submatch (or ,@all-prefixes)) ":")) link))
+              (match-string 1 link))
+             ((file-name-absolute-p link) "file")
+             ((string-match "\\`\\.\\.?/" link) "file")))
+           (initial-input
+            (cond
+             (description)
+             (desc)
+             ((org-link-get-parameter type :insert-description)
+              (let ((def (org-link-get-parameter type :insert-description)))
                 (condition-case nil
-		    (funcall org-link-make-description-function link desc)
-		  (error
-		   (message "Can't get link description from %S"
-		            org-link-make-description-function)
-		   (sit-for 2)
-		   nil))))))
-	(setq desc (if (called-interactively-p 'any)
-		       (read-string "Description: " initial-input)
-		     initial-input))))
+                    (cond
+                     ((stringp def) def)
+                     ((functionp def)
+                      (funcall def link desc)))
+                  (error
+                   (message "Can't get link description from org link parameter `:insert-description': %S"
+                            def)
+                   (sit-for 2)
+                   nil))))
+             (org-link-make-description-function
+              (condition-case nil
+                  (funcall org-link-make-description-function link desc)
+                (error
+                 (message "Can't get link description from %S"
+                          org-link-make-description-function)
+                 (sit-for 2)
+                 nil))))))
+      (setq desc (if (called-interactively-p 'any)
+                     (read-string "Description: " initial-input)
+                   initial-input)))
 
     (unless (org-string-nw-p desc) (setq desc nil))
     (when remove (apply #'delete-region remove))
