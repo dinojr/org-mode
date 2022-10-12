@@ -61,6 +61,35 @@ variable, and communication channel under `info'."
 
 ;;; Internal Tests
 
+(ert-deftest test-org-export/org-export-copy-buffer ()
+  "Test `org-export-copy-buffer' specifications."
+  ;; The copy must not overwrite the original file.
+  (org-test-with-temp-text-in-file
+      "* Heading"
+    (let ((file (buffer-file-name)))
+      (with-current-buffer (org-export-copy-buffer)
+        (insert "This must not go into the original file.")
+        (save-buffer)
+        (should
+         (equal
+          "* Heading"
+          (with-temp-buffer
+            (insert-file-contents file)
+            (buffer-string)))))))
+  ;; The copy must not show when re-opening the original file.
+  (org-test-with-temp-text-in-file
+      "* Heading"
+    (let ((file (buffer-file-name))
+          (buffer-copy (generate-new-buffer " *Org export copy*")))
+      (org-export-with-buffer-copy
+       :to-buffer buffer-copy
+       (insert "This must not show as the original file.")
+       (save-buffer))
+      ;; Unassign the original buffer from file.
+      (setq buffer-file-name nil)
+      (should-not
+       (equal buffer-copy (get-file-buffer file))))))
+
 (ert-deftest test-org-export/bind-keyword ()
   "Test reading #+BIND: keywords."
   ;; Test with `org-export-allow-bind-keywords' set to t.

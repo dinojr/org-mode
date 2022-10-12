@@ -59,7 +59,7 @@
 (declare-function org-element-parse-buffer "org-element" (&optional granularity visible-only))
 (declare-function org-element-property "org-element" (property element))
 (declare-function org-element-type "org-element" (element))
-(declare-function org-element-cache-reset "org-element" (&optional all))
+(declare-function org-element-cache-reset "org-element" (&optional all no-persistence))
 (declare-function org-entry-get "org" (pom property &optional inherit literal-nil))
 (declare-function org-export-create-backend "ox" (&rest rest) t)
 (declare-function org-export-data-with-backend "ox" (data backend info))
@@ -1355,6 +1355,9 @@ However, when FORCE is non-nil, create new columns if necessary."
   "Insert a new column into the table."
   (interactive)
   (unless (org-at-table-p) (user-error "Not at a table"))
+  (when (eobp) (save-excursion (insert "\n")))
+  (unless (string-match-p "|[ \t]*$" (org-current-line-string))
+    (org-table-align))
   (org-table-find-dataline)
   (let ((col (max 1 (org-table-current-column)))
 	(beg (org-table-begin))
@@ -1649,6 +1652,9 @@ Swap with anything in target cell."
 With prefix ARG, insert below the current line."
   (interactive "P")
   (unless (org-at-table-p) (user-error "Not at a table"))
+  (when (eobp) (save-excursion (insert "\n")))
+  (unless (string-match-p "|[ \t]*$" (org-current-line-string))
+    (org-table-align))
   (org-table-with-shrunk-columns
    (let* ((line (buffer-substring (line-beginning-position) (line-end-position)))
 	  (new (org-table-clean-line line)))

@@ -2880,6 +2880,8 @@ INFO is a plist containing export properties."
 	;; turn the fragment into an image.
 	(setq latex-frag (concat latex-header latex-frag))))
     (org-export-with-buffer-copy
+     :to-buffer (get-buffer-create " *Org HTML Export LaTeX*")
+     :drop-visibility t :drop-narrowing t :drop-contents t
      (erase-buffer)
      (insert latex-frag)
      (org-format-latex cache-relpath nil nil cache-dir nil

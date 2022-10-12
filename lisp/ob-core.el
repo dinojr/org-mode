@@ -791,7 +791,7 @@ guess will be made."
 		 result exec-start-time)
 	    (unless (fboundp cmd)
 	      (error "No org-babel-execute function for %s!" lang))
-	    (message "executing %s %s %s..."
+	    (message "Executing %s %s %s..."
 		     (capitalize lang)
                      (pcase executor-type
                        ('src-block "code block")
@@ -3272,6 +3272,15 @@ Emacs shutdown.")
 		    (not (member "table" ,params))))
 	   ,scalar-form
 	 ,@table-forms))))
+
+(defmacro org-babel-temp-directory ()
+  "Return temporary directory suitable for `default-directory'."
+  `(if (file-remote-p default-directory)
+       org-babel-remote-temporary-directory
+     (or (and org-babel-temporary-directory
+	      (file-exists-p org-babel-temporary-directory)
+	      org-babel-temporary-directory)
+	 temporary-file-directory)))
 
 (defun org-babel-temp-file (prefix &optional suffix)
   "Create a temporary file in the `org-babel-temporary-directory'.
