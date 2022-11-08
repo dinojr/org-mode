@@ -278,17 +278,17 @@ list can be:
 
 - `:lang-name' the actual name of the language.")
 
-(defconst org-latex-line-break-safe "\\\\\\empty"
+(defconst org-latex-line-break-safe "\\\\[0pt]"
   "Linebreak protecting the following [...].
 
-Without \"\\empty\" it would be interpreted as an optional argument to
+Without \"[0pt]\" it would be interpreted as an optional argument to
 the \\\\.
 
 This constant, for example, makes the below code not err:
 
 \\begin{tabular}{c|c}
-    [t] & s\\\\\\empty
-    [I] & A\\\\\\empty
+    [t] & s\\\\[0pt]
+    [I] & A\\\\[0pt]
     [m] & kg
 \\end{tabular}")
 
@@ -1888,7 +1888,7 @@ INFO is a plist used as a communication channel."
       (?c . ,(plist-get info :creator))
       (?l . ,language)
       (?L . ,(capitalize language))
-      (?D . ,(org-export-get-date info)))))
+      (?D . ,(org-export-data (org-export-get-date info) info)))))
 
 (defun org-latex--insert-compiler (info)
   "Insert LaTeX_compiler info into the document.
@@ -3577,9 +3577,9 @@ and FLOAT are extracted from SRC-BLOCK and INFO in `org-latex-src-block'."
                        (org-export-data main info))))))
         (lst-opt (plist-get info :latex-listings-options)))
     (concat
-     ;; Options.
      (format
-      "\\lstset{%s}\n"
+      "\\begin{lstlisting}[%s]\n%s\\end{lstlisting}"
+      ;; Options.
       (concat
        (org-latex--make-option-string
         (append
@@ -3600,10 +3600,8 @@ and FLOAT are extracted from SRC-BLOCK and INFO in `org-latex-src-block'."
                (t `(("firstnumber" ,(number-to-string (1+ num-start)))
                     ("numbers" "left"))))))
        (let ((local-options (plist-get attributes :options)))
-         (and local-options (concat "," local-options)))))
-     ;; Source code.
-     (format
-      "\\begin{lstlisting}\n%s\\end{lstlisting}"
+         (and local-options (concat "," local-options))))
+      ;; Source code.
       (let* ((code-info (org-export-unravel-code src-block))
              (max-width
               (apply 'max
@@ -4005,9 +4003,9 @@ a communication channel."
 			      (org-export-get-parent-table table-row) info))))
 	   (format "%s
 \\endfirsthead
-\\multicolumn{%d}{l}{%s} \\\\\\empty
+\\multicolumn{%d}{l}{%s} \\\\[0pt]
 %s
-%s \\\\\\empty\n
+%s \\\\[0pt]\n
 %s
 \\endhead
 %s\\multicolumn{%d}{r}{%s} \\\\

@@ -231,7 +231,8 @@ the mailing list moderators have to do.].  We ask you to read and
 respect the
 [[https://www.gnu.org/philosophy/kind-communication.html][GNU Kind
 Communications Guidelines]] when sending messages on this mailing
-list.
+list.  Please allow up to one month for the response and followup if
+no response is received on the bug report.
 
 #+findex: org-version
 #+findex: org-submit-bug-report
@@ -5934,8 +5935,8 @@ the agenda (see [[*Weekly/daily agenda]]).  We distinguish:
   #+cindex: timestamp, with repeater interval
   A timestamp may contain a /repeater interval/, indicating that it
   applies not only on the given date, but again and again after
-  a certain interval of N days (d), weeks (w), months (m), or years
-  (y).  The following shows up in the agenda every Wednesday:
+  a certain interval of N hours (h), days (d), weeks (w), months (m),
+  or years (y).  The following shows up in the agenda every Wednesday:
 
   #+begin_example
   ,* Pick up Sam at school
@@ -7215,12 +7216,12 @@ The relative and countdown are started with separate commands.
   #+findex: org-timer-start
   Start or reset the relative timer.  By default, the timer is set
   to 0.  When called with a {{{kbd(C-u)}}} prefix, prompt the user for
-  a starting offset.  If there is a timer string at point, this is
-  taken as the default, providing a convenient way to restart taking
-  notes after a break in the process.  When called with a double
-  prefix argument {{{kbd(C-u C-u)}}}, change all timer strings in the
-  active region by a certain amount.  This can be used to fix timer
-  strings if the timer was not started at exactly the right moment.
+  a starting offset.  The prompt will default to a timer string at
+  point (if any), providing a convenient way to restart taking notes
+  after a break in the process.  When called with a double prefix
+  argument {{{kbd(C-u C-u)}}}, change all timer strings in the active
+  region by a certain amount.  This can be used to fix timer strings
+  if the timer was not started at exactly the right moment.
 
 - {{{kbd(C-c C-x ;)}}} (~org-timer-set-timer~) ::
 
@@ -11488,6 +11489,12 @@ command:
     and fall back on that number if none is found.
   - When set to nil, try to get the width from an =#+ATTR.*= keyword
     and fall back on the original width if none is found.
+
+
+#+vindex: org-cycle-inline-images-display
+Inline images can also be displayed when cycling the folding state.
+When custom option ~org-cycle-inline-images-display~ is set, the
+visible inline images under subtree will be displayed automatically.
 
 ** Captions
 :PROPERTIES:
@@ -18401,13 +18408,17 @@ follows from the type specified above.
 
   When used along with =file= type, the result is a link to the file
   specified in =:file= header argument.  However, unlike plain =file=
-  type, nothing is written to the disk.  The block is used for its
-  side-effects only, as in the following example:
+  type, code block output is not written to the disk.  The block is
+  expected to generate the file by its side-effects only, as in the
+  following example:
 
   #+begin_example
-  ,#+begin_src shell :results file link :file "download.tar.gz"
-  wget -c "https://example.com/download.tar.gz"
+  ,#+begin_src shell :results file link :file "org-mode-unicorn.svg"
+    wget -c "https://orgmode.org/resources/img/org-mode-unicorn.svg"
   ,#+end_src
+
+  ,#+RESULTS:
+  [[file:org-mode-unicorn.svg]]
   #+end_example
 
 - =org= ::
@@ -18986,6 +18997,12 @@ tangled, or exported.
 
   Expansion of noweb syntax references in the body of the code block
   when tangling.  No expansion when evaluating or exporting.
+
+- =strip-tangle= ::
+
+  Expansion of noweb syntax references in the body of the code block
+  when evaluating or exporting.  Removes noweb syntax references
+  when exporting.
 
 - =no-export= ::
 

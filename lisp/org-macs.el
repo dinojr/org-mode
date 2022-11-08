@@ -123,6 +123,14 @@ Version mismatch is commonly encountered in the following situations:
 	     ,@body)
 	 (set-buffer-modified-p ,was-modified)))))
 
+(defmacro org-with-base-buffer (buffer &rest body)
+  "Run BODY in base buffer for BUFFER.
+If BUFFER is nil, use base buffer for `current-buffer'."
+  (declare (debug (body)) (indent 1))
+  `(with-current-buffer (or (buffer-base-buffer ,buffer)
+                            (or ,buffer (current-buffer)))
+     ,@body))
+
 (defmacro org-with-point-at (pom &rest body)
   "Move to buffer and point of point-or-marker POM for the duration of BODY."
   (declare (debug (form body)) (indent 1))
@@ -312,17 +320,23 @@ If EXCLUDE-TMP is non-nil, ignore temporary buffers."
 ;;; File
 
 (defun org-file-newer-than-p (file time)
-  "Non-nil if FILE is newer than TIME.
-FILE is a filename, as a string, TIME is a Lisp time value, as
-returned by, e.g., `current-time'."
-  (and (file-exists-p file)
-       ;; Only compare times up to whole seconds as some file-systems
-       ;; (e.g. HFS+) do not retain any finer granularity.  As
-       ;; a consequence, make sure we return non-nil when the two
-       ;; times are equal.
-       (not (time-less-p (org-time-convert-to-integer
-			  (nth 5 (file-attributes file)))
-			 (org-time-convert-to-integer time)))))
+  "Non-nil if FILE modification time is greater than TIME.
+TIME should be obtained earlier for the same FILE name using
+
+  \(file-attribute-modification-time (file-attributes file))
+
+If TIME is nil (file did not exist) then any existing FILE
+is considered as a newer one.  Some file systems have coarse
+timestamp resolution, for example 1 second on HFS+ or 2 seconds on FAT,
+so nil may be returned when file is updated twice within a short period
+of time.  File timestamp and system clock `current-time' may have
+different resolution, so attempts to compare them may give unexpected
+results.
+
+Consider `file-newer-than-file-p' to check up to date state
+in target-prerequisite files relation."
+  (let ((mtime (file-attribute-modification-time (file-attributes file))))
+    (and mtime (or (not time) (time-less-p time mtime)))))
 
 (defun org-compile-file (source process ext &optional err-msg log-buf spec)
   "Compile a SOURCE file using PROCESS.
@@ -356,7 +370,7 @@ it for output."
 	 (full-name (file-truename source))
 	 (out-dir (or (file-name-directory source) "./"))
 	 (output (expand-file-name (concat base-name "." ext) out-dir))
-	 (time (current-time))
+	 (time (file-attribute-modification-time (file-attributes output)))
 	 (err-msg (if (stringp err-msg) (concat ".  " err-msg) "")))
     (save-window-excursion
       (pcase process
@@ -1086,9 +1100,17 @@ Return width in pixels when PIXELS is non-nil."
                   (if (get-buffer-window (current-buffer))
                       (car (window-text-pixel-size
                             nil (line-beginning-position) (point-max)))
-                    (set-window-buffer nil (current-buffer))
-                    (car (window-text-pixel-size
-                          nil (line-beginning-position) (point-max)))))
+                    (let ((dedicatedp (window-dedicated-p))
+                          (oldbuffer (window-buffer)))
+                      (unwind-protect
+                          (progn
+                            ;; Do not throw error in dedicated windows.
+                            (set-window-dedicated-p nil nil)
+                            (set-window-buffer nil (current-buffer))
+                            (car (window-text-pixel-size
+                                  nil (line-beginning-position) (point-max))))
+                        (set-window-buffer nil oldbuffer)
+                        (set-window-dedicated-p nil dedicatedp)))))
             (unless pixels
               (erase-buffer)
               (insert "a")
@@ -1096,9 +1118,17 @@ Return width in pixels when PIXELS is non-nil."
                     (if (get-buffer-window (current-buffer))
                         (car (window-text-pixel-size
                               nil (line-beginning-position) (point-max)))
-                      (set-window-buffer nil (current-buffer))
-                      (car (window-text-pixel-size
-                            nil (line-beginning-position) (point-max)))))))
+                      (let ((dedicatedp (window-dedicated-p))
+                            (oldbuffer (window-buffer)))
+                        (unwind-protect
+                            (progn
+                              ;; Do not throw error in dedicated windows.
+                              (set-window-dedicated-p nil nil)
+                              (set-window-buffer nil (current-buffer))
+                              (car (window-text-pixel-size
+                                    nil (line-beginning-position) (point-max))))
+                          (set-window-buffer nil oldbuffer)
+                          (set-window-dedicated-p nil dedicatedp)))))))
           (if pixels
               pixel-width
             (/ pixel-width symbol-width)))))))

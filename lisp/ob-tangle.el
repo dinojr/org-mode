@@ -246,7 +246,7 @@ matching a regular expression."
 	       org-babel-default-header-args))
 	    (tangle-file
 	     (when (equal arg '(16))
-	       (or (cdr (assq :tangle (nth 2 (org-babel-get-src-block-info 'light))))
+	       (or (cdr (assq :tangle (nth 2 (org-babel-get-src-block-info 'no-eval))))
 		   (user-error "Point is not in a source code block"))))
 	    path-collector)
 	(mapc ;; map over file-names
@@ -461,7 +461,7 @@ code blocks by target file."
 	  (setq last-heading-pos current-heading-pos)))
       (unless (or (org-in-commented-heading-p)
 		  (org-in-archived-heading-p))
-	(let* ((info (org-babel-get-src-block-info 'light))
+	(let* ((info (org-babel-get-src-block-info 'no-eval))
 	       (src-lang (nth 0 info))
 	       (src-tfile (cdr (assq :tangle (nth 2 info)))))
 	  (unless (or (string= src-tfile "no")
@@ -536,7 +536,9 @@ non-nil, return the full association list to be used by
 	 (body
 	  ;; Run the tangle-body-hook.
           (let ((body (if (org-babel-noweb-p params :tangle)
-			  (org-babel-expand-noweb-references info)
+                          (if (string= "strip-tangle" (cdr (assq :noweb (nth 2 info))))
+                            (replace-regexp-in-string (org-babel-noweb-wrap) "" (nth 1 info))
+			    (org-babel-expand-noweb-references info))
 			(nth 1 info))))
 	    (with-temp-buffer
 	      (insert
@@ -594,7 +596,7 @@ non-nil, return the full association list to be used by
   "Return a list of begin and end link comments for the code block at point.
 INFO, when non nil, is the source block information, as returned
 by `org-babel-get-src-block-info'."
-  (let ((link-data (pcase (or info (org-babel-get-src-block-info 'light))
+  (let ((link-data (pcase (or info (org-babel-get-src-block-info 'no-eval))
 		     (`(,_ ,_ ,params ,_ ,name ,start ,_)
 		      `(("start-line" . ,(org-with-point-at start
 					   (number-to-string

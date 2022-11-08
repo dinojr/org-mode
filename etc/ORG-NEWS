@@ -228,6 +228,11 @@ commands.
 =:noweb-prefix= can be set to =no= to prevent the prefix characters
 from being repeated when expanding a multiline noweb reference.
 
+*** New =:noweb= babel header argument value =strip-tangle=
+
+=:noweb= can be set to =strip-tangle= to strip the noweb syntax references
+before tangling.
+
 *** New LaTeX source block backend using =engraved-faces-latex=
 
 When ~org-latex-src-block-backend~ is set to ~engraved~,
@@ -307,6 +312,13 @@ to pass the contents of a named code block as a string argument.
 The new property =ORG-IMAGE-ACTUAL-WIDTH= can override the global
 variable ~org-image-actual-width~ value for inline images display width.
 
+*** Outline cycling can now include inline image visibility
+
+New ~org-cycle-hook~ function ~org-cycle-display-inline-images~ for
+auto-displaying inline images in the visible parts of the subtree.
+This behavior is controlled by new custom option
+~org-cycle-inline-images-display~.
+
 *** New ~org-babel-tangle-finished-hook~ hook run at the very end of ~org-babel-tangle~
 
 This provides a proper counterpart to ~org-babel-pre-tangle-hook~, as
@@ -324,6 +336,18 @@ value of ~org-babel-clojure-backend~. For example:
 #+end_src
 
 ** New options
+*** A new option for custom setting ~org-refile-use-outline-path~ to show document title in refile targets
+
+Setting ~org-refile-use-outline-path~ to ~'title~ will show title
+instead of the file name in refile targets.  If the document do not have
+a title, the filename will be used, similar to ~'file~ option.
+
+*** A new option for custom setting ~org-agenda-show-outline-path~ to show document title
+
+Setting ~org-agenda-show-outline-path~ to ~'title~ will show title
+instead of the file name at the beginning of the outline.  The title of
+the document can be set by special keyword =#+title:=.
+
 *** New custom settings =org-icalendar-scheduled-summary-prefix= and =org-icalendar-deadline-summary-prefix=
 
 These settings allow users to define prefixes for exported summary
@@ -361,6 +385,10 @@ event time when the alarm time is set to 0.  The default value is
 nil -- do not create alarms at the event time.
 
 ** New functions and changes in function arguments
+*** New function ~org-get-title~ to get =#+TITLE:= property from buffers
+
+A function to collect the document title from the org-mode buffer.
+
 *** ~org-fold-show-entry~ does not fold drawers by default anymore
 
 ~org-fold-show-entry~ now accepts an optional argument HIDE-DRAWERS.
@@ -432,8 +460,52 @@ exported and an ASCII graph will be inserted below the src block.
 
 The new variable name is =org-plantuml-args=.  It now applies to both
 jar PlantUML file and executable.
+*** Default values and interpretations of ~org-time-stamp-formats~ and ~org-time-stamp-custom-formats~ are changed
+
+Leading =<= and trailing =>= in the default values of
+~org-time-stamp-formats~ and ~org-time-stamp-custom-formats~ are
+stripped.
+
+The Org functions that are using these variables also ignore leading
+and trailing brackets (=<...>= and =[...]=, if present).
+
+This change makes the Org code more consistent and also makes the
+docstring for ~org-time-stamp-custom-formats~ accurate.
+
+No changes on the user side are needed if
+~org-time-stamp-custom-formats~ was customized.
+*** ~org-timestamp-format~ is renamed to ~org-format-timestamp~
+
+The old function name is similar to other ~org-time-stamp-format~
+function.  The new name emphasizes that ~org-format-timestamp~ works
+on =timestamp= objects.
+
+*** Updated argument list in ~org-time-stamp-format~
+
+New =custom= argument in ~org-time-stamp-format~ makes the function
+use ~org-time-stamp-custom-formats~ instead of
+~org-time-stamp-formats~ to determine the format.
+
+Optional argument =long= is renamed to =with-time=, emphasizing that it refers to time stamp format with time specification.
+
+Optional argument =inactive= can now have a value =no-brackets= to
+return format string with brackets stripped.
 
 ** Miscellaneous
+*** SQL Babel ~:dbconnection~ parameter can be mixed with other SQL Babel parameters
+
+Before you could either specify SQL parameters like ~:dbhost~,
+~:dbuser~, ~:database~, etc or a ~:dbconnection~ parameter which looks
+up all other parameters from the ~sql-connection-alist~ variable.  Now
+it's possible to specify a ~:dbconnection~ and additionally other
+parameters that will add or overwrite the parameters coming from
+~sql-connection-alist~.
+
+E.g. if you have a connection in your ~sql-connection-alist~ to a
+server that has many databases, you don't need an entry for every
+database but instead can just specify ~:database~ next to your
+~:dbconnection~ parameter.
+
 *** Post-processing code blocks can return an empty list
 
 When the result of a regular code block is nil, then that was already

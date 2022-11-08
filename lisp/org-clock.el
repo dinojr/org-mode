@@ -55,7 +55,6 @@
 (defvar org-frame-title-format-backup nil)
 (defvar org-state)
 (defvar org-link-bracket-re)
-(defvar org-time-stamp-formats)
 
 (defgroup org-clock nil
   "Options concerning clocking working time in Org mode."
@@ -446,8 +445,8 @@ specifications than `frame-title-format', which see."
 you can do \"~$ sudo apt-get install xprintidle\" if you are using
 a Debian-based distribution.
 
-Alternatively, can find x11idle.c in the org-contrib repository at
-https://git.sr.ht/~bzg/org-contrib"
+Alternatively, can find x11idle.c in
+https://orgmode.org/worg/code/scripts/x11idle.c"
   :group 'org-clock
   :version "24.4"
   :package-version '(Org . "8.0")
@@ -701,7 +700,10 @@ pointing to it."
 			org-odd-levels-only)
 		       (length prefix))))))
       (when (and cat task)
-	(insert (format "[%c] %-12s  %s\n" i cat task))
+        (if (string-match-p "[[:print:]]" (make-string 1 i))
+	    (insert (format "[%c] %-12s  %s\n" i cat task))
+          ;; Avoid non-printable characters.
+          (insert (format "[N/A] %-12s  %s\n" cat task)))
 	(cons i marker)))))
 
 (defvar org-clock-task-overrun nil
@@ -1198,8 +1200,8 @@ If `only-dangling-p' is non-nil, only ask to resolve dangling
 
 (defvar org-x11idle-exists-p
   ;; Check that x11idle exists
-  (and (or (eq window-system 'pgtk) (eq window-system 'x))
-       (eq 0 (call-process-shell-command
+
+  (and (eq 0 (call-process-shell-command
               (format "command -v %s" org-clock-x11idle-program-name)))
        ;; Check that x11idle can retrieve the idle time
        ;; FIXME: Why "..-shell-command" rather than just `call-process'?
@@ -2386,7 +2388,7 @@ have priority."
 	      (`interactive "(Range interactively set)")
 	      (`untilnow "now"))))
       (if (not as-strings) (list start end text)
-	(let ((f (cdr org-time-stamp-formats)))
+	(let ((f (org-time-stamp-format 'with-time)))
 	  (list (and start (format-time-string f start))
 		(format-time-string f end)
 		text))))))
@@ -2480,16 +2482,6 @@ the currently selected interval size."
 	  (beginning-of-line 1)
 	  (org-update-dblock)
 	  t)))))
-
-(defun org-clock-get-file-title (file-name)
-  "Get the file title from FILE-NAME as a string.
-Return short FILE-NAME if #+title keyword is not found."
-  (with-current-buffer (find-file-noselect file-name)
-    (org-macro-initialize-templates)
-    (let ((title (assoc-default "title" org-macro-templates)))
-      (if (null title)
-          (file-name-nondirectory file-name)
-        title))))
 
 ;;;###autoload
 (defun org-dblock-write:clocktable (params)
@@ -2747,7 +2739,8 @@ from the dynamic block definition."
 			     "\n")
 
                      (if filetitle
-                         (org-clock-get-file-title file-name)
+                         (or (org-get-title file-name)
+                             (file-name-nondirectory file-name))
                        (file-name-nondirectory file-name))
 		     (if level?    "| " "") ;level column, maybe
 		     (if timestamp "| " "") ;timestamp column, maybe
@@ -3073,18 +3066,31 @@ Otherwise, return nil."
 		  (org-time-string-to-time (match-string 1)))
 	    (org-clock-update-mode-line)))
 	 (t
-	  (and (match-end 4) (delete-region (match-beginning 4) (match-end 4)))
-	  (end-of-line 1)
-	  (setq ts (match-string 1)
-		te (match-string 3))
-	  (setq s (- (org-time-string-to-seconds te)
+          ;; Prevent recursive call from `org-timestamp-change'.
+          (cl-letf (((symbol-function 'org-clock-update-time-maybe) #'ignore))
+            ;; Update timestamps.
+            (save-excursion
+              (goto-char (match-beginning 1)) ; opening timestamp
+              (save-match-data (org-timestamp-change 0 'day)))
+            ;; Refresh match data.
+            (looking-at re)
+            (save-excursion
+              (goto-char (match-beginning 3)) ; closing timestamp
+              (save-match-data (org-timestamp-change 0 'day))))
+          ;; Refresh match data.
+          (looking-at re)
+          (and (match-end 4) (delete-region (match-beginning 4) (match-end 4)))
+          (end-of-line 1)
+          (setq ts (match-string 1)
+                te (match-string 3))
+          (setq s (- (org-time-string-to-seconds te)
 		     (org-time-string-to-seconds ts))
-		neg (< s 0)
-		s (abs s)
-		h (floor (/ s 3600))
-		s (- s (* 3600 h))
-		m (floor (/ s 60))
-		s (- s (* 60 s)))
+                neg (< s 0)
+                s (abs s)
+                h (floor (/ s 3600))
+                s (- s (* 3600 h))
+                m (floor (/ s 60))
+                s (- s (* 60 s)))
 	  (insert " => " (format (if neg "-%d:%02d" "%2d:%02d") h m))
 	  t))))))
 

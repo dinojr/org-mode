@@ -76,6 +76,7 @@
 (declare-function org-list-struct "org-list" ())
 (declare-function org-list-to-generic "org-list" (LIST PARAMS))
 (declare-function org-list-to-lisp "org-list" (&optional delete))
+(declare-function org-list-to-org "org-list" (list &optional params))
 (declare-function org-macro-escape-arguments "org-macro" (&rest args))
 (declare-function org-mark-ring-push "org" (&optional pos buffer))
 (declare-function org-narrow-to-subtree "org" (&optional element))
@@ -339,7 +340,7 @@ then run `org-babel-execute-src-block'."
 This includes header arguments, language and name, and is largely
 a window into the `org-babel-get-src-block-info' function."
   (interactive)
-  (let ((info (org-babel-get-src-block-info 'light))
+  (let ((info (org-babel-get-src-block-info 'no-eval))
 	(full (lambda (it) (> (length it) 0)))
 	(printf (lambda (fmt &rest args) (princ (apply #'format fmt args)))))
     (when info
@@ -414,7 +415,7 @@ then run `org-babel-switch-to-session'."
     (mkdirp	. ((yes no)))
     (no-expand)
     (noeval)
-    (noweb	. ((yes no tangle no-export strip-export)))
+    (noweb	. ((yes no tangle strip-tangle no-export strip-export)))
     (noweb-ref	. :any)
     (noweb-sep  . :any)
     (noweb-prefix . ((no yes)))
@@ -640,10 +641,10 @@ the list of header arguments."
         (push elem lst)))
     (reverse lst)))
 
-(defun org-babel-get-src-block-info (&optional light datum)
+(defun org-babel-get-src-block-info (&optional no-eval datum)
   "Extract information from a source block or inline source block.
 
-When optional argument LIGHT is non-nil, Babel does not resolve
+When optional argument NO-EVAL is non-nil, Babel does not resolve
 remote variable references; a process which could likely result
 in the execution of other code blocks, and do not evaluate Lisp
 values in parameters.
@@ -677,9 +678,9 @@ a list with the following pattern:
 		       ;; properties applicable to its location within
 		       ;; the document.
 		       (org-with-point-at (org-element-property :begin datum)
-			 (org-babel-params-from-properties lang light))
+			 (org-babel-params-from-properties lang no-eval))
 		       (mapcar (lambda (h)
-				 (org-babel-parse-header-arguments h light))
+				 (org-babel-parse-header-arguments h no-eval))
 			       (cons (org-element-property :parameters datum)
 				     (org-element-property :header datum)))))
 	       (or (org-element-property :switches datum) "")
@@ -687,7 +688,7 @@ a list with the following pattern:
 	       (org-element-property (if inline :begin :post-affiliated)
 				     datum)
 	       (and (not inline) (org-src-coderef-format datum)))))
-	(unless light
+	(unless no-eval
 	  (setf (nth 2 info) (org-babel-process-params (nth 2 info))))
 	(setf (nth 2 info) (org-babel-generate-file-param name (nth 2 info)))
 	info))))
@@ -743,7 +744,11 @@ guess will be made."
           (or executor-type
               ;; If `executor-type' is unset, then we will make an
               ;; informed guess.
-              (pcase (char-after org-babel-current-src-block-location)
+              (pcase (and
+                      ;; When executing virtual src block, no location
+                      ;; is known.
+                      org-babel-current-src-block-location
+                      (char-after org-babel-current-src-block-location))
                 (?s 'inline-src-block)
                 (?c 'inline-babel-call)
                 (?# (pcase (char-after (+ 2 org-babel-current-src-block-location))
@@ -802,10 +807,10 @@ guess will be made."
 		     (let ((name (nth 4 info)))
 		       (if name
                            (format "(%s)" name)
-                         (format "at position %d" (nth 5 info)))))
+                         (format "at position %S" (nth 5 info)))))
 	    (setq exec-start-time (current-time)
                   result
-		  (let ((r (funcall cmd body params)))
+		  (let ((r (save-current-buffer (funcall cmd body params))))
 		    (if (and (eq (cdr (assq :result-type params)) 'value)
 			     (or (member "vector" result-params)
 				 (member "table" result-params))
@@ -933,7 +938,7 @@ arguments and pop open the results in a preview buffer."
 (defun org-babel-insert-header-arg (&optional header-arg value)
   "Insert a header argument selecting from lists of common args and values."
   (interactive)
-  (let* ((info (org-babel-get-src-block-info 'light))
+  (let* ((info (org-babel-get-src-block-info 'no-eval))
 	 (lang (car info))
 	 (begin (nth 5 info))
 	 (lang-headers (intern (concat "org-babel-header-args:" lang)))
@@ -1130,7 +1135,7 @@ code block, otherwise return nil.  With optional prefix argument
 RE-RUN the source-code block is evaluated even if results already
 exist."
   (interactive "P")
-  (pcase (org-babel-get-src-block-info 'light)
+  (pcase (org-babel-get-src-block-info 'no-eval)
     (`(,_ ,_ ,arguments ,_ ,_ ,start ,_)
      (save-excursion
        ;; Go to the results, if there aren't any then run the block.
@@ -1813,7 +1818,8 @@ its current beginning instead.
 Return the point at the beginning of the current source block.
 Specifically at the beginning of the #+BEGIN_SRC line.  Also set
 match-data relatively to `org-babel-src-block-regexp', which see.
-If the point is not on a source block then return nil."
+If the point is not on a source block or within blank lines after an
+src block, then return nil."
   (let ((element (or src-block (org-element-at-point))))
     (when (eq (org-element-type element) 'src-block)
       (let ((end (org-element-property :end element)))
@@ -1965,17 +1971,21 @@ With optional prefix argument ARG, jump backward ARG many source blocks."
 When called from inside of a code block the current block is
 split.  When called from outside of a code block a new code block
 is created.  In both cases if the region is demarcated and if the
-region is not active then the point is demarcated."
+region is not active then the point is demarcated.
+
+When called within blank lines after a code block, create a new code
+block of the same language with the previous."
   (interactive "P")
-  (let* ((info (org-babel-get-src-block-info 'light))
+  (let* ((info (org-babel-get-src-block-info 'no-eval))
 	 (start (org-babel-where-is-src-block-head))
+         ;; `start' will be nil when within space lines after src block.
 	 (block (and start (match-string 0)))
 	 (headers (and start (match-string 4)))
 	 (stars (concat (make-string (or (org-current-level) 1) ?*) " "))
 	 (upper-case-p (and block
 			    (let (case-fold-search)
 			      (string-match-p "#\\+BEGIN_SRC" block)))))
-    (if info
+    (if (and info start) ;; At src block, but not within blank lines after it.
         (mapc
          (lambda (place)
            (save-excursion
@@ -1987,26 +1997,27 @@ region is not active then the point is demarcated."
                                                      (line-end-position)))
                  (delete-region (line-beginning-position) (line-end-position)))
                (insert (concat
-			(if (looking-at "^") "" "\n")
-			indent (if upper-case-p "#+END_SRC\n" "#+end_src\n")
-			(if arg stars indent) "\n"
-			indent (if upper-case-p "#+BEGIN_SRC " "#+begin_src ")
-			lang
-			(if (> (length headers) 1)
+		        (if (looking-at "^") "" "\n")
+		        indent (if upper-case-p "#+END_SRC\n" "#+end_src\n")
+		        (if arg stars indent) "\n"
+		        indent (if upper-case-p "#+BEGIN_SRC " "#+begin_src ")
+		        lang
+		        (if (> (length headers) 1)
 			    (concat " " headers) headers)
-			(if (looking-at "[\n\r]")
+		        (if (looking-at "[\n\r]")
 			    ""
 			  (concat "\n" (make-string (current-column) ? )))))))
 	   (move-end-of-line 2))
          (sort (if (org-region-active-p) (list (mark) (point)) (list (point))) #'>))
       (let ((start (point))
-	    (lang (completing-read
-		   "Lang: "
-		   (mapcar #'symbol-name
-			   (delete-dups
-			    (append (mapcar #'car org-babel-load-languages)
-				    (mapcar (lambda (el) (intern (car el)))
-					    org-src-lang-modes))))))
+	    (lang (or (car info) ; Reuse language from previous block.
+                      (completing-read
+		       "Lang: "
+		       (mapcar #'symbol-name
+			       (delete-dups
+			        (append (mapcar #'car org-babel-load-languages)
+				        (mapcar (lambda (el) (intern (car el)))
+					        org-src-lang-modes)))))))
 	    (body (delete-and-extract-region
 		   (if (org-region-active-p) (mark) (point)) (point))))
 	(insert (concat (if (looking-at "^") "" "\n")
@@ -2442,7 +2453,7 @@ INFO may provide the values of these header arguments (in the
 		   ((member "list" result-params)
 		    (insert
 		     (org-trim
-		      (org-list-to-generic
+		      (org-list-to-org
 		       (cons 'unordered
 			     (mapcar
 			      (lambda (e)
@@ -2874,9 +2885,9 @@ parameters when merging lists."
   "Check if PARAMS require expansion in CONTEXT.
 CONTEXT may be one of :tangle, :export or :eval."
   (let ((allowed-values (cl-case context
-			  (:tangle '("yes" "tangle" "no-export" "strip-export"))
-			  (:eval   '("yes" "no-export" "strip-export" "eval"))
-			  (:export '("yes")))))
+			  (:tangle '("yes" "tangle" "no-export" "strip-export" "strip-tangle"))
+			  (:eval   '("yes" "no-export" "strip-export" "eval" "strip-tangle"))
+			  (:export '("yes" "strip-tangle")))))
     (cl-some (lambda (v) (member v allowed-values))
 	     (split-string (or (cdr (assq :noweb params)) "")))))
 
@@ -2916,7 +2927,7 @@ would set the value of argument \"a\" equal to \"9\".  Note that
 these arguments are not evaluated in the current source-code
 block but are passed literally to the \"example-block\"."
   (let* ((parent-buffer (or parent-buffer (current-buffer)))
-	 (info (or info (org-babel-get-src-block-info 'light)))
+	 (info (or info (org-babel-get-src-block-info 'no-eval)))
          (lang (nth 0 info))
          (body (nth 1 info))
 	 (comment (string= "noweb" (cdr (assq :comments (nth 2 info)))))
@@ -3160,7 +3171,10 @@ situations in which is it not appropriate."
 	      (or (memq (string-to-char cell) '(?\( ?' ?` ?\[))
 		  (string= cell "*this*")))
 	 (eval (read cell) t))
-	((eq (string-to-char cell) ?\") (read cell))
+	((save-match-data
+           (and (string-match "^[[:space:]]*\"\\(.*\\)\"[[:space:]]*$" cell)
+                (not (string-match "[^\\]\"" (match-string 1 cell)))))
+         (read cell))
 	(t (org-no-properties cell))))
 
 (defun org-babel--string-to-number (string)
@@ -3205,7 +3219,7 @@ If the table is trivial, then return it as a scalar."
 (defun org-babel-string-read (cell)
   "Strip nested \"s from around strings."
   (org-babel-read (or (and (stringp cell)
-                           (string-match "\"\\(.+\\)\"" cell)
+                           (string-match "^[[:space:]]*\"\\(.+\\)\"[[:space:]]*$" cell)
                            (match-string 1 cell))
                       cell) t))
 
@@ -3276,7 +3290,8 @@ Emacs shutdown.")
 (defmacro org-babel-temp-directory ()
   "Return temporary directory suitable for `default-directory'."
   `(if (file-remote-p default-directory)
-       org-babel-remote-temporary-directory
+       (concat (file-remote-p default-directory)
+	       org-babel-remote-temporary-directory)
      (or (and org-babel-temporary-directory
 	      (file-exists-p org-babel-temporary-directory)
 	      org-babel-temporary-directory)
@@ -3287,42 +3302,31 @@ Emacs shutdown.")
 Passes PREFIX and SUFFIX directly to `make-temp-file' with the
 value of `temporary-file-directory' temporarily set to the value
 of `org-babel-temporary-directory'."
-  (if (file-remote-p default-directory)
-      (let ((prefix
-             (concat (file-remote-p default-directory)
-                     (expand-file-name
-		      prefix org-babel-remote-temporary-directory))))
-        (make-temp-file prefix nil suffix))
-    (let ((temporary-file-directory
-	   (or (and org-babel-temporary-directory
-		    (file-exists-p org-babel-temporary-directory)
-		    org-babel-temporary-directory)
-	       temporary-file-directory)))
-      (make-temp-file prefix nil suffix))))
+  (make-temp-file
+   (concat (file-name-as-directory (org-babel-temp-directory)) prefix)
+   nil
+   suffix))
+
+(defmacro org-babel-temp-stable-directory ()
+  "Return temporary stable directory."
+  `(let ((org-babel-temporary-directory org-babel-temporary-stable-directory))
+     (org-babel-temp-directory)))
 
 (defun org-babel-temp-stable-file (data prefix &optional suffix)
   "Create a temporary file in the `org-babel-remove-temporary-stable-directory'.
 The file name is stable with respect to DATA.  The file name is
 constructed like the following: PREFIXDATAhashSUFFIX."
-  (if (file-remote-p default-directory)
-      (let* ((prefix
-              (concat (file-remote-p default-directory)
-                      (expand-file-name
-		       prefix org-babel-temporary-stable-directory)))
-             (path (concat prefix (format "%s" (sxhash data)) (or suffix ""))))
-        (with-temp-file path)
-        path)
-    (let* ((temporary-file-directory
-	    (or (and org-babel-temporary-stable-directory
-		     (file-exists-p org-babel-temporary-stable-directory)
-		     org-babel-temporary-stable-directory)
-	        temporary-file-directory))
-           (path (concat
-                  (expand-file-name
-		   prefix org-babel-temporary-stable-directory)
-                  (format "%s" (sxhash data)) (or suffix ""))))
-      (with-temp-file path)
-      path)))
+  (let ((path
+         (format
+          "%s%s%s%s"
+          (file-name-as-directory (org-babel-temp-stable-directory))
+          prefix
+          (sxhash data)
+          (or suffix ""))))
+    ;; Create file.
+    (with-temp-file path)
+    ;; Return it.
+    path))
 
 (defun org-babel-remove-temporary-directory ()
   "Remove `org-babel-temporary-directory' on Emacs shutdown."

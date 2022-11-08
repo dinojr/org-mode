@@ -920,7 +920,7 @@ See `org-odt--build-date-styles' for implementation details."
   (let* ((format-timestamp
 	  (lambda (timestamp format &optional end utc)
 	    (if timestamp
-		(org-timestamp-format timestamp format end utc)
+		(org-format-timestamp timestamp format end utc)
 	      (format-time-string format nil utc))))
 	 (has-time-p (or (not timestamp)
 			 (org-timestamp-has-time-p timestamp)))
@@ -936,14 +936,8 @@ See `org-odt--build-date-styles' for implementation details."
 	     ;; don't bother about formatting the date contents to be
 	     ;; compatible with "OrgDate1" and "OrgDateTime" styles.  A
 	     ;; simple Org-style date should suffice.
-	     (date (let* ((formats
-			   (if org-display-custom-times
-			       (cons (substring
-				      (car org-time-stamp-custom-formats) 1 -1)
-				     (substring
-				      (cdr org-time-stamp-custom-formats) 1 -1))
-			     '("%Y-%m-%d %a" . "%Y-%m-%d %a %H:%M")))
-			  (format (if has-time-p (cdr formats) (car formats))))
+	     (date (let ((format (org-time-stamp-format
+                                  has-time-p 'no-brackets 'custom)))
 		     (funcall format-timestamp timestamp format end)))
 	     (repeater (let ((repeater-type (org-element-property
 					     :repeater-type timestamp))
@@ -1422,8 +1416,10 @@ original parsed data.  INFO is a plist holding export options."
 	 ;; value before moving on to temp-buffer context down below.
 	 (custom-time-fmts
 	  (if org-display-custom-times
-	      (cons (substring (car org-time-stamp-custom-formats) 1 -1)
-		    (substring (cdr org-time-stamp-custom-formats) 1 -1))
+              (cons (org-time-stamp-format
+                     nil 'no-brackets 'custom)
+                    (org-time-stamp-format
+                     'with-time 'no-brackets 'custom))
 	    '("%Y-%M-%d %a" . "%Y-%M-%d %a %H:%M"))))
     (with-temp-buffer
       (insert-file-contents
@@ -2688,7 +2684,14 @@ INFO is a plist holding contextual information.  See
 		((member type '("http" "https" "ftp" "mailto"))
 		 (concat type ":" raw-path))
 		((string= type "file")
-		 (org-export-file-uri raw-path))
+                 (let ((path-uri (org-export-file-uri raw-path)))
+                   (if (string-prefix-p "file://" path-uri)
+                       path-uri
+                     ;; Otherwise, it is a relative path.
+                     ;; OpenOffice treats base directory inside the odt
+                     ;; archive.  The directory containing the odt file
+                     ;; is "../".
+                     (concat "../" path-uri))))
 		(t raw-path)))
 	 ;; Convert & to &amp; for correct XML representation
 	 (path (replace-regexp-in-string "&" "&amp;" path)))
@@ -2737,6 +2740,16 @@ INFO is a plist holding contextual information.  See
 	   (format "<text:a xlink:type=\"simple\" xlink:href=\"#%s\">%s</text:a>"
 		   (org-export-get-reference destination info)
 		   (or desc (org-export-get-ordinal destination info))))
+          ;; Link to a file, corresponding to string return value of
+          ;; `org-export-resolve-id-link'.  Export it is file link.
+          (plain-text
+           (let ((file-link (org-element-copy link)))
+             (org-element-put-property file-link :type "file")
+             (org-element-put-property file-link :path destination)
+             (org-element-put-property
+              file-link
+              :raw-link (format "file:%s" destination))
+             (org-odt-link file-link desc info)))
 	  ;; Fuzzy link points to some element (e.g., an inline image,
 	  ;; a math formula or a table).
 	  (otherwise
@@ -2903,9 +2916,28 @@ contextual information."
 	(setq output
 	      (replace-regexp-in-string (car pair) (cdr pair) output t nil))))
     ;; Handle break preservation if required.
-    (when (plist-get info :preserve-breaks)
-      (setq output (replace-regexp-in-string
-		    "\\(\\\\\\\\\\)?[ \t]*\n" "<text:line-break/>" output t)))
+    (if (plist-get info :preserve-breaks)
+        (setq output (replace-regexp-in-string
+		      "\\(\\\\\\\\\\)?[ \t]*\n" "<text:line-break/>" output t))
+      ;; OpenDocument schema recognizes newlines as spaces, which may
+      ;; not be desired in scripts that do not separate words with
+      ;; spaces (for example, Han script).  `fill-region' is able to
+      ;; handle such situations.
+      ;; FIXME: The unnecessary spaced may still remain when a newline
+      ;; is at a boundary between Org objects (e.g. italics markup
+      ;; followed by newline).
+      (setq output
+            (with-temp-buffer
+              (insert output)
+              (save-match-data
+                (let ((leading (and (string-match (rx bos (1+ blank)) output)
+                                    (match-string 0 output)))
+                      (trailing (and (string-match (rx (1+ blank) eos) output)
+                                     (match-string 0 output))))
+                  ;; Unfill, retaining leading/trailing space.
+                  (let ((fill-column (point-max)))
+                    (fill-region (point-min) (point-max)))
+                  (concat leading (buffer-string) trailing))))))
     ;; Return value.
     output))
 

@@ -254,22 +254,22 @@ optional prefix argument COMPILE, the tangled Emacs Lisp file is
 byte-compiled before it is loaded."
   (interactive "fFile to load: \nP")
   (let ((tangled-file (concat (file-name-sans-extension file) ".el")))
-    ;; Tangle only if the Org file is newer than the Elisp file.
-    (unless (org-file-newer-than-p
-	     tangled-file
-	     (file-attribute-modification-time
-	      (file-attributes (file-truename file))))
+    ;; Tangle only if the Elisp file is older than the Org file.
+    ;; Catch the case when the .el file exists while the .org file is missing.
+    (unless (file-exists-p file)
+      (error "File to tangle does not exist: %s" file))
+    (when (file-newer-than-file-p file tangled-file)
+      (org-babel-tangle-file file
+                             tangled-file
+                             (rx string-start
+                                 (or "emacs-lisp" "elisp")
+                                 string-end))
       ;; Make sure that tangled file modification time is
       ;; updated even when `org-babel-tangle-file' does not make changes.
       ;; This avoids re-tangling changed FILE where the changes did
       ;; not affect the tangled code.
       (when (file-exists-p tangled-file)
-        (set-file-times tangled-file))
-      (org-babel-tangle-file file
-                             tangled-file
-                             (rx string-start
-                                 (or "emacs-lisp" "elisp")
-                                 string-end)))
+        (set-file-times tangled-file)))
     (if compile
 	(progn
 	  (byte-compile-file tangled-file)
@@ -468,8 +468,17 @@ The time stamps may be either active or inactive.")
   "Regular expression for specifying repeated events.
 After a match, group 1 contains the repeat expression.")
 
-(defconst org-time-stamp-formats '("<%Y-%m-%d %a>" . "<%Y-%m-%d %a %H:%M>")
-  "Formats for `format-time-string' which are used for time stamps.")
+(defconst org-time-stamp-formats '("%Y-%m-%d %a" . "%Y-%m-%d %a %H:%M")
+  "Formats for `format-time-string' which are used for time stamps.
+
+The value is a cons cell containing two strings.  The `car' and `cdr'
+of the cons cell are used to format time stamps that do not and do
+contain time, respectively.
+
+Leading \"<\"/\"[\" and trailing \">\"/\"]\" pair will be stripped
+from the format strings.
+
+Also, see `org-time-stamp-format'.")
 
 ;;;; Clock and Planning
 
@@ -2416,22 +2425,48 @@ To turn this on on a per-file basis, insert anywhere in the file:
 (make-variable-buffer-local 'org-display-custom-times)
 
 (defcustom org-time-stamp-custom-formats
-  '("<%m/%d/%y %a>" . "<%m/%d/%y %a %H:%M>") ; american
-  "Custom formats for time stamps.  See `format-time-string' for the syntax.
+  '("%m/%d/%y %a" . "%m/%d/%y %a %H:%M") ; american
+  "Custom formats for time stamps.
+
+See `format-time-string' for the syntax.
+
 These are overlaid over the default ISO format if the variable
 `org-display-custom-times' is set.  Time like %H:%M should be at the
 end of the second format.  The custom formats are also honored by export
-commands, if custom time display is turned on at the time of export."
-  :group 'org-time
-  :type 'sexp)
+commands, if custom time display is turned on at the time of export.
 
-(defun org-time-stamp-format (&optional long inactive)
-  "Get the right format for a time string."
-  (let ((f (if long (cdr org-time-stamp-formats)
-	     (car org-time-stamp-formats))))
-    (if inactive
-	(concat "[" (substring f 1 -1) "]")
-      f)))
+Leading \"<\" and trailing \">\" pair will be stripped from the format
+strings."
+  :group 'org-time
+  :type '(cons string string))
+
+(defun org-time-stamp-format (&optional with-time inactive custom)
+  "Get timestamp format for a time string.
+
+The format is based on `org-time-stamp-formats' (if CUSTOM is nil) or or
+`org-time-stamp-custom-formats' (if CUSTOM if non-nil).
+
+When optional argument WITH-TIME is non-nil, the timestamp will contain
+time.
+
+When optional argument INACTIVE is nil, format active timestamp.
+When `no-brackets', strip timestamp brackets.
+Otherwise, format inactive timestamp."
+  (let ((format (funcall
+                 (if with-time #'cdr #'car)
+                 (if custom
+                     org-time-stamp-custom-formats
+                   org-time-stamp-formats))))
+    ;; Strip brackets, if any.
+    (when (or (and (string-prefix-p "<" format)
+                   (string-suffix-p ">" format))
+              (and (string-prefix-p "[" format)
+                   (string-suffix-p "]" format)))
+      (setq format (substring format 1 -1)))
+    (pcase inactive
+      (`no-brackets format)
+      (`nil (concat "<" format ">"))
+      (_ (concat "[" format "]")))))
 
 (defcustom org-deadline-warning-days 14
   "Number of days before expiration during which a deadline becomes active.
@@ -6160,25 +6195,22 @@ frame is not changed."
     (run-hook-with-args 'org-cycle-hook 'all)
     (and (window-live-p cwin) (select-window cwin))))
 
-(defun org-get-indirect-buffer (&optional buffer heading)
-  (setq buffer (or buffer (current-buffer)))
-  (let ((n 1) (base (buffer-name buffer)) bname)
-    (while (buffer-live-p
-	    (get-buffer
-	     (setq bname
-		   (concat base "-"
-			   (if heading (concat heading "-" (number-to-string n))
-			     (number-to-string n))))))
-      (setq n (1+ n)))
-    (condition-case nil
-        (let ((indirect-buffer (make-indirect-buffer buffer bname 'clone)))
-          ;; Decouple folding state.  We need to do it manually since
-          ;; `make-indirect-buffer' does not run
-          ;; `clone-indirect-buffer-hook'.
-          (org-fold-core-decouple-indirect-buffer-folds)
-          ;; Return the buffer.
-          indirect-buffer)
-      (error (make-indirect-buffer buffer bname)))))
+(cl-defun org-get-indirect-buffer (&optional (buffer (current-buffer)) heading)
+  "Return an indirect buffer based on BUFFER.
+If HEADING, append it to the name of the new buffer."
+  (let* ((base-buffer (or (buffer-base-buffer buffer) buffer))
+         (buffer-name (generate-new-buffer-name
+                       (format "%s%s"
+                               (buffer-name base-buffer)
+                               (if heading
+                                   (concat "::" heading)
+                                 ""))))
+         (indirect-buffer (make-indirect-buffer base-buffer buffer-name 'clone)))
+    ;; Decouple folding state.  We need to do it manually since
+    ;; `make-indirect-buffer' does not run
+    ;; `clone-indirect-buffer-hook'.
+    (org-fold-core-decouple-indirect-buffer-folds)
+    indirect-buffer))
 
 (defun org-set-frame-title (title)
   "Set the title of the current frame to the string TITLE."
@@ -7034,7 +7066,7 @@ the inserted text when done.
 
 When REMOVE is non-nil, remove the subtree from the clipboard."
   (interactive "P")
-  (setq tree (or tree (and kill-ring (current-kill 0))))
+  (setq tree (or tree (current-kill 0)))
   (unless (org-kill-is-subtree-p tree)
     (user-error
      (substitute-command-keys
@@ -7109,8 +7141,7 @@ When REMOVE is non-nil, remove the subtree from the clipboard."
        (when (or for-yank (called-interactively-p 'interactive))
          (message "Clipboard pasted as level %d subtree" new-level))
        (when (and (not for-yank) ; in this case, org-yank will decide about folding
-		  kill-ring
-		  (equal org-subtree-clip (current-kill 0))
+		  (equal org-subtree-clip tree)
 		  org-subtree-clip-folded)
          ;; The tree was folded before it was killed/copied
          (org-fold-subtree t))
@@ -7124,7 +7155,7 @@ headline level is not the largest headline level in the tree.
 So this will actually accept several entries of equal levels as well,
 which is OK for `org-paste-subtree'.
 If optional TXT is given, check this string instead of the current kill."
-  (let* ((kill (or txt (and kill-ring (current-kill 0)) ""))
+  (let* ((kill (or txt (ignore-errors (current-kill 0))))
 	 (re (org-get-limited-outline-regexp))
 	 (^re (concat "^" re))
 	 (start-level (and kill
@@ -7423,10 +7454,26 @@ the default is \"/\"."
 	(setf (substring fpath (- width 2)) "..")))
     fpath))
 
-(defun org-display-outline-path (&optional file current separator just-return-string)
+(defun org-get-title (&optional buffer-or-file)
+  "Collect title from the provided `org-mode' BUFFER-OR-FILE.
+
+Returns nil if there are no #+TITLE property."
+  (let ((buffer (cond ((bufferp buffer-or-file) buffer-or-file)
+                      ((stringp buffer-or-file) (find-file-noselect
+                                                 buffer-or-file))
+                      (t (current-buffer)))))
+    (with-current-buffer buffer
+      (org-macro-initialize-templates)
+      (let ((title (assoc-default "title" org-macro-templates)))
+        (unless (string= "" title)
+          title)))))
+
+(defun org-display-outline-path (&optional file-or-title current separator just-return-string)
   "Display the current outline path in the echo area.
 
-If FILE is non-nil, prepend the output with the file name.
+If FILE-OR-TITLE is `title', prepend outline with file title.  If
+it is non-nil or title is not present in document, prepend
+outline path with the file name.
 If CURRENT is non-nil, append the current heading to the output.
 SEPARATOR is passed through to `org-format-outline-path'.  It separates
 the different parts of the path and defaults to \"/\".
@@ -7434,6 +7481,7 @@ If JUST-RETURN-STRING is non-nil, return a string, don't display a message."
   (interactive "P")
   (let* (case-fold-search
 	 (bfn (buffer-file-name (buffer-base-buffer)))
+         (title-prop (when (eq file-or-title 'title) (org-get-title)))
 	 (path (and (derived-mode-p 'org-mode) (org-get-outline-path)))
 	 res)
     (when current (setq path (append path
@@ -7445,7 +7493,10 @@ If JUST-RETURN-STRING is non-nil, return a string, don't display a message."
 	  (org-format-outline-path
 	   path
 	   (1- (frame-width))
-	   (and file bfn (concat (file-name-nondirectory bfn) separator))
+	   (and file-or-title bfn (concat (if (and (eq file-or-title 'title) title-prop)
+					      title-prop
+					    (file-name-nondirectory bfn))
+				 separator))
 	   separator))
     (add-face-text-property 0 (length res)
 			    `(:height ,(face-attribute 'default :height))
@@ -11317,7 +11368,7 @@ See also `org-scan-tags'."
 			     (pv (match-string 7 term))
 			     (regexp (eq (string-to-char pv) ?{))
 			     (strp (eq (string-to-char pv) ?\"))
-			     (timep (string-match-p "^\"[[<].*[]>]\"$" pv))
+			     (timep (string-match-p "^\"[[<][0-9]+.*[]>]\"$" pv))
 			     (po (org-op-to-function (match-string 6 term)
 						     (if timep 'time strp))))
 			(setq pv (if (or regexp strp) (substring pv 1 -1) pv))
@@ -11553,13 +11604,12 @@ in Lisp code use `org-set-tags' instead."
     (cond
      ((equal '(4) arg) (org-align-tags t))
      ((and (org-region-active-p) org-loop-over-headlines-in-active-region)
-      (let (org-loop-over-headlines-in-active-region) ;  hint: infinite recursion.
+      (let ((cl (if (eq org-loop-over-headlines-in-active-region 'start-level)
+		    'region-start-level 'region))
+            org-loop-over-headlines-in-active-region) ;  hint: infinite recursion.
 	(org-map-entries
 	 #'org-set-tags-command
-	 nil
-	 (if (eq org-loop-over-headlines-in-active-region 'start-level)
-	     'region-start-level
-	   'region)
+	 nil cl
 	 (lambda () (when (org-invisible-p) (org-end-of-subtree nil t))))))
      (t
       (save-excursion
@@ -13718,23 +13768,20 @@ user."
       (save-excursion
 	(end-of-line 1)
 	(while (not (equal (buffer-substring
-			    (max (point-min) (- (point) 4)) (point))
-			   "    "))
+			  (max (point-min) (- (point) 4)) (point))
+			 "    "))
 	  (insert " ")))
       (let* ((ans (concat (buffer-substring (line-beginning-position)
                                             (point-max))
 			  " " (or org-ans1 org-ans2)))
 	     (org-end-time-was-given nil)
 	     (f (org-read-date-analyze ans org-def org-defdecode))
-	     (fmts (if org-display-custom-times
-		       org-time-stamp-custom-formats
-		     org-time-stamp-formats))
-	     (fmt (if (or org-with-time
-			  (and (boundp 'org-time-was-given) org-time-was-given))
-		      (cdr fmts)
-		    (car fmts)))
+	     (fmt (org-time-stamp-format
+                   (or org-with-time
+                       (and (boundp 'org-time-was-given) org-time-was-given))
+                   org-read-date-inactive
+                   org-display-custom-times))
 	     (txt (format-time-string fmt (org-encode-time f)))
-	     (txt (if org-read-date-inactive (concat "[" (substring txt 1 -1) "]") txt))
 	     (txt (concat "=> " txt)))
 	(when (and org-end-time-was-given
 		   (string-match org-plain-time-of-day-regexp txt))
@@ -14063,9 +14110,8 @@ PRE and POST are optional strings to be inserted before and after the
 stamp.
 The command returns the inserted time stamp."
   (org-fold-core-ignore-modifications
-    (let ((fmt (funcall (if with-hm 'cdr 'car) org-time-stamp-formats))
+    (let ((fmt (org-time-stamp-format with-hm inactive))
 	  stamp)
-      (when inactive (setq fmt (concat "[" (substring fmt 1 -1) "]")))
       (insert-before-markers-and-inherit (or pre ""))
       (when (listp extra)
         (setq extra (car extra))
@@ -14110,11 +14156,10 @@ The command returns the inserted time stamp."
 	(setq off (- (match-end 0) (match-beginning 0)))))
     (setq end (- end off))
     (setq with-hm (and (nth 1 t1) (nth 2 t1))
-	  tf (funcall (if with-hm 'cdr 'car) org-time-stamp-custom-formats)
+	  tf (org-time-stamp-format with-hm 'no-brackets 'custom)
 	  time (org-fix-decoded-time t1)
 	  str (org-add-props
-		  (format-time-string
-		   (substring tf 1 -1) (org-encode-time time))
+		  (format-time-string tf (org-encode-time time))
 		  nil 'mouse-face 'highlight))
     (put-text-property beg end 'display str)))
 
@@ -16079,16 +16124,16 @@ SNIPPETS-P indicates if this is run to create snippet images for HTML."
 
 (defvar-local org-inline-image-overlays nil)
 
-(defun org-toggle-inline-images (&optional include-linked)
+(defun org-toggle-inline-images (&optional include-linked beg end)
   "Toggle the display of inline images.
 INCLUDE-LINKED is passed to `org-display-inline-images'."
   (interactive "P")
   (if org-inline-image-overlays
       (progn
-	(org-remove-inline-images)
+	(org-remove-inline-images beg end)
 	(when (called-interactively-p 'interactive)
 	  (message "Inline image display turned off")))
-    (org-display-inline-images include-linked)
+    (org-display-inline-images include-linked nil beg end)
     (when (called-interactively-p 'interactive)
       (message (if org-inline-image-overlays
 		   (format "%d images displayed inline"
@@ -16178,8 +16223,8 @@ BEG and END define the considered part.  They default to the
 buffer boundaries with possible narrowing."
   (interactive "P")
   (when (display-graphic-p)
-    (unless refresh
-      (org-remove-inline-images)
+    (when refresh
+      (org-remove-inline-images beg end)
       (when (fboundp 'clear-image-cache) (clear-image-cache)))
     (let ((end (or end (point-max))))
       (org-with-point-at (or beg (point-min))
@@ -16329,11 +16374,16 @@ buffer boundaries with possible narrowing."
     (delete ov org-inline-image-overlays)
     (delete-overlay ov)))
 
-(defun org-remove-inline-images ()
+(defun org-remove-inline-images (&optional beg end)
   "Remove inline display of images."
   (interactive)
-  (mapc #'delete-overlay org-inline-image-overlays)
-  (setq org-inline-image-overlays nil))
+  (let* ((beg (or beg (point-min)))
+         (end (or end (point-max)))
+         (overlays (overlays-in beg end)))
+    (dolist (ov overlays)
+      (when (memq ov org-inline-image-overlays)
+        (setq org-inline-image-overlays (delq ov org-inline-image-overlays))
+        (delete-overlay ov)))))
 
 (defvar org-self-insert-command-undo-counter 0)
 (defvar org-speed-command nil)
@@ -19709,7 +19759,7 @@ Otherwise, use its start."
   "Non-nil when TIMESTAMP has a time specified."
   (org-element-property :hour-start timestamp))
 
-(defun org-timestamp-format (timestamp format &optional end utc)
+(defun org-format-timestamp (timestamp format &optional end utc)
   "Format a TIMESTAMP object into a string.
 
 FORMAT is a format specifier to be passed to
@@ -19770,13 +19820,13 @@ it has a `diary' type."
   (let ((type (org-element-property :type timestamp)))
     (if (or (not org-display-custom-times) (eq type 'diary))
 	(org-element-interpret-data timestamp)
-      (let ((fmt (funcall (if (org-timestamp-has-time-p timestamp) #'cdr #'car)
-			  org-time-stamp-custom-formats)))
+      (let ((fmt (org-time-stamp-format
+                  (org-timestamp-has-time-p timestamp) nil 'custom)))
 	(if (and (not boundary) (memq type '(active-range inactive-range)))
-	    (concat (org-timestamp-format timestamp fmt)
+	    (concat (org-format-timestamp timestamp fmt)
 		    "--"
-		    (org-timestamp-format timestamp fmt t))
-	  (org-timestamp-format timestamp fmt (eq boundary 'end)))))))
+		    (org-format-timestamp timestamp fmt t))
+	  (org-format-timestamp timestamp fmt (eq boundary 'end)))))))
 
 ;;; Other stuff
 
