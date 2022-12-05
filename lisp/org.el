@@ -9,7 +9,7 @@
 ;; URL: https://orgmode.org
 ;; Package-Requires: ((emacs "25.1"))
 
-;; Version: 9.6-pre
+;; Version: 9.6
 
 ;; This file is part of GNU Emacs.
 ;;
@@ -1383,13 +1383,13 @@ For more examples, see the system specific constants
 (defcustom org-resource-download-policy 'prompt
   "The policy applied to requests to obtain remote resources.
 
-This affects keywords like #+setupfile and #+incude on export,
+This affects keywords like #+setupfile and #+include on export,
 `org-persist-write:url',and `org-attach-url' in non-interactive
 Emacs sessions.
 
-This recognises four possible values:
+This recognizes four possible values:
 - t, remote resources should always be downloaded.
-- prompt, you will be prompted to download resources nt considered safe.
+- prompt, you will be prompted to download resources not considered safe.
 - safe, only resources considered safe will be downloaded.
 - nil, never download remote resources.
 
@@ -1408,7 +1408,7 @@ URI regexps are applied to both URLs and Org files requesting
 remote resources."
   :group 'org
   :package-version '(Org . "9.6")
-  :type '(list regexp))
+  :type '(repeat regexp))
 
 (defcustom org-open-non-existing-files nil
   "Non-nil means `org-open-file' opens non-existing files.
@@ -3243,7 +3243,7 @@ All available processes and theirs documents can be found in
      :image-output-type "svg"
      :image-size-adjust (1.7 . 1.5)
      :latex-compiler ("latex -interaction nonstopmode -output-directory %o %f")
-     :image-converter ("dvisvgm %f -n -b min -c %S -o %O"))
+     :image-converter ("dvisvgm %f --no-fonts --exact-bbox --scale=%S --output=%O"))
     (imagemagick
      :programs ("latex" "convert")
      :description "pdf > png"
@@ -4227,7 +4227,11 @@ related expressions."
 	       (delq nil
 		     (mapcar
 		      (lambda (value)
-			(and (string-match "\\`\\(\\S-+\\)[ \t]+\\(.+\\)" value)
+			(and (or
+                              ;; "abbrev with spaces" spec
+                              (string-match "\\`\"\\(.+[^\\]\\)\"[ \t]+\\(.+\\)" value)
+                              ;; abbrev spec
+                              (string-match "\\`\\(\\S-+\\)[ \t]+\\(.+\\)" value))
 			     (cons (match-string-no-properties 1 value)
 				   (match-string-no-properties 2 value))))
 		      (cdr (assoc "LINK" alist))))))
@@ -4621,7 +4625,7 @@ returns non-nil if any of them match."
                 ", which is not considered safe.\n\n"
                 "Do you want to download this?  You can type\n "
                 (propertize "!" 'face 'success)
-                " to download this resource, and permanantly mark it as safe.\n "
+                " to download this resource, and permanently mark it as safe.\n "
                 (if domain
                     (concat
                      (propertize "d" 'face 'success)
@@ -4632,7 +4636,7 @@ returns non-nil if any of them match."
                 (propertize "f" 'face 'success)
                 (if current-file
                     (concat
-                     " to download this resource, and permanantly mark all resources in "
+                     " to download this resource, and permanently mark all resources in "
                      (propertize current-file 'face 'underline)
                      " as safe.\n ")
                   "")
@@ -4760,7 +4764,7 @@ This is for getting out of special buffers like capture.")
 (defvar org-element-cache-persistent); Defined in org-element.el
 (defvar org-element-use-cache); Defined in org-element.el
 (defvar org-mode-loading nil
-  "Non-nil during Org mode initialisation.")
+  "Non-nil during Org mode initialization.")
 
 (defvar org-agenda-file-menu-enabled t
   "When non-nil, refresh Agenda files in Org menu when loading Org.")
@@ -5266,7 +5270,7 @@ This includes angle, plain, and bracket links."
 		(progn
                   (add-face-text-property start end face-property)
 		  (add-text-properties start end properties))
-              ;; Initialise folding when used outside org-mode.
+              ;; Initialize folding when used outside org-mode.
               (unless (or (derived-mode-p 'org-mode)
 			  (and (org-fold-folding-spec-p 'org-link-description)
                                (org-fold-folding-spec-p 'org-link)))
@@ -5283,7 +5287,7 @@ This includes angle, plain, and bracket links."
                   (org-fold-core-set-folding-spec-property spec :visible t))
                 (org-fold-region start end nil 'org-link)
                 (org-fold-region start end nil 'org-link-description)
-                ;; We are folding the whole emphasised text with SPEC
+                ;; We are folding the whole emphasized text with SPEC
                 ;; first.  It makes everything invisible (or whatever
                 ;; the user wants).
                 (org-fold-region start end t spec)
@@ -6403,7 +6407,7 @@ Return nil before first heading."
 			    "" h))
 			  (h h)))
 	      (tags (and (not no-tags) (match-string 5))))
-          ;; Restore cleared optimisation.
+          ;; Restore cleared optimization.
           (org-fold-core-update-optimisation (match-beginning 0) (match-end 0))
 	  (mapconcat #'identity
 		     (delq nil (list todo priority headline tags))
@@ -16132,21 +16136,32 @@ SNIPPETS-P indicates if this is run to create snippet images for HTML."
 
 (defvar-local org-inline-image-overlays nil)
 
+(defun org--inline-image-overlays (&optional beg end)
+  "Return image overlays between BEG and END."
+  (let* ((beg (or beg (point-min)))
+         (end (or end (point-max)))
+         (overlays (overlays-in beg end))
+         result)
+    (dolist (ov overlays result)
+      (when (memq ov org-inline-image-overlays)
+        (push ov result)))))
+
 (defun org-toggle-inline-images (&optional include-linked beg end)
   "Toggle the display of inline images.
 INCLUDE-LINKED is passed to `org-display-inline-images'."
   (interactive "P")
-  (if org-inline-image-overlays
+  (if (org--inline-image-overlays beg end)
       (progn
-	(org-remove-inline-images beg end)
-	(when (called-interactively-p 'interactive)
+        (org-remove-inline-images beg end)
+        (when (called-interactively-p 'interactive)
 	  (message "Inline image display turned off")))
     (org-display-inline-images include-linked nil beg end)
     (when (called-interactively-p 'interactive)
-      (message (if org-inline-image-overlays
-		   (format "%d images displayed inline"
-			   (length org-inline-image-overlays))
-		 "No images to display inline")))))
+      (let ((new (org--inline-image-overlays beg end)))
+        (message (if new
+		     (format "%d images displayed inline"
+			     (length new))
+		   "No images to display inline"))))))
 
 (defun org-redisplay-inline-images ()
   "Assure display of inline images and refresh them."
@@ -16391,7 +16406,11 @@ buffer boundaries with possible narrowing."
     (dolist (ov overlays)
       (when (memq ov org-inline-image-overlays)
         (setq org-inline-image-overlays (delq ov org-inline-image-overlays))
-        (delete-overlay ov)))))
+        (delete-overlay ov)))
+    ;; Clear removed overlays.
+    (dolist (ov org-inline-image-overlays)
+      (unless (overlay-buffer ov)
+        (setq org-inline-image-overlays (delq ov org-inline-image-overlays))))))
 
 (defvar org-self-insert-command-undo-counter 0)
 (defvar org-speed-command nil)

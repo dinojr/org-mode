@@ -1082,7 +1082,7 @@ Return width in pixels when PIXELS is non-nil."
         (setq-local buffer-invisibility-spec
                     (if (listp current-invisibility-spec)
                         (mapcar (lambda (el)
-                                  ;; Consider elipsis to have 0 width.
+                                  ;; Consider ellipsis to have 0 width.
                                   ;; It is what Emacs 28+ does, but we have
                                   ;; to force it in earlier Emacs versions.
                                   (if (and (consp el) (cdr el))
@@ -1324,15 +1324,14 @@ that will be added to PLIST.  Returns the string that was modified."
    0 (length string) (if props (append plist props) plist) string)
   string)
 
-(defun org-make-parameter-alist (flat)
-  ;; FIXME: "flat" is called a "plist"!
-  "Return alist based on FLAT.
-FLAT is a list with alternating symbol names and values.  The
-returned alist is a list of lists with the symbol name in car and
-the value in cadr."
-  (when flat
-    (cons (list (car flat) (cadr flat))
-	  (org-make-parameter-alist (cddr flat)))))
+(defun org-make-parameter-alist (plist)
+  "Return alist based on PLIST.
+PLIST is a property list with alternating symbol names and values.
+The returned alist is a list of lists with the symbol name in `car'
+and the value in `cadr'."
+  (when plist
+    (cons (list (car plist) (cadr plist))
+	  (org-make-parameter-alist (cddr plist)))))
 
 (defsubst org-get-at-bol (property)
   "Get text property PROPERTY at the beginning of line."
