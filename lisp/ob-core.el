@@ -849,8 +849,7 @@ guess will be made."
 		    (setq result (org-babel-ref-resolve post))
 		    (when file
 		      (setq result-params (remove "file" result-params))))))
-	      (if (member "none" result-params)
-		  (message "result silenced")
+	      (unless (member "none" result-params)
 	        (org-babel-insert-result
 	         result result-params info new-hash lang
                  (time-subtract (current-time) exec-start-time))))
@@ -2709,7 +2708,9 @@ specified as an an \"attachment:\" style link."
                 ((and 'attachment (guard in-attach-dir)) "attachment")
                 (_ "file"))
               (if (and request-attachment in-attach-dir)
-                  (file-relative-name result-file-name)
+                  (file-relative-name
+                   result-file-name
+                   (file-name-as-directory attach-dir))
 	        (if (and default-directory
 		         base-file-name same-directory?)
 		    (if (eq org-link-file-path-type 'adaptive)

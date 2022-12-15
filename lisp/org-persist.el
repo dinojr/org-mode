@@ -161,7 +161,7 @@
 (declare-function org-at-heading-p "org" (&optional invisible-not-ok))
 
 
-(defconst org-persist--storage-version "2.5"
+(defconst org-persist--storage-version "2.7"
   "Persistent storage layout version.")
 
 (defgroup org-persist nil
@@ -258,6 +258,9 @@ properties:
 (defvar org-persist--index-hash nil
   "Hash table storing `org-persist--index'.  Used for quick access.
 They keys are conses of (container . associated).")
+
+(defvar org-persist--index-age nil
+  "The modification time of the index file, when it was loaded.")
 
 (defvar org-persist--report-time 0.5
   "Whether to report read/write time.
@@ -420,7 +423,9 @@ Return PLIST."
       (org-persist-collection-let collection
         (dolist (cont (cons container container))
           (unless (listp (car container))
-            (org-persist-gc:generic cont collection))
+            (org-persist-gc:generic cont collection)
+            (dolist (afile (org-persist-associated-files:generic cont collection))
+              (delete-file afile)))
           (remhash (cons cont associated) org-persist--index-hash)
           (when path (remhash (cons cont (list :file path)) org-persist--index-hash))
           (when inode (remhash (cons cont (list :inode inode)) org-persist--index-hash))
@@ -587,8 +592,10 @@ COLLECTION is the plist holding data collection."
 (defun org-persist-load:index (container index-file _)
   "Load `org-persist--index' from INDEX-FILE according to CONTAINER."
   (unless org-persist--index
-    (setq org-persist--index (org-persist-read:index container index-file nil))
-    (setq org-persist--index-hash nil)
+    (setq org-persist--index (org-persist-read:index container index-file nil)
+          org-persist--index-hash nil
+          org-persist--index-age (file-attribute-modification-time
+                                  (file-attributes index-file)))
     (if org-persist--index
         (mapc (lambda (collection) (org-persist--add-to-index collection 'hash)) org-persist--index)
       (setq org-persist--index nil)
@@ -601,7 +608,7 @@ COLLECTION is the plist holding data collection."
       (plist-put (org-persist--get-collection container) :expiry 'never))))
 
 (defun org-persist--load-index ()
-  "Load `org-persist--index."
+  "Load `org-persist--index'."
   (org-persist-load:index
    `(index ,org-persist--storage-version)
    (org-file-name-concat org-persist-directory org-persist-index-file)
@@ -662,12 +669,13 @@ COLLECTION is the plist holding data collection."
              (file-copy (org-file-name-concat
                          org-persist-directory
                          (format "%s-%s.%s" persist-file (md5 path) ext))))
-        (unless (file-exists-p (file-name-directory file-copy))
-          (make-directory (file-name-directory file-copy) t))
-        (if (org--should-fetch-remote-resource-p path)
-            (url-copy-file path file-copy 'overwrite)
-          (error "The remote resource %S is considered unsafe, and will not be downloaded."
-                 path))
+        (unless (file-exists-p file-copy)
+          (unless (file-exists-p (file-name-directory file-copy))
+            (make-directory (file-name-directory file-copy) t))
+          (if (org--should-fetch-remote-resource-p path)
+              (url-copy-file path file-copy 'overwrite)
+            (error "The remote resource %S is considered unsafe, and will not be downloaded."
+                   path)))
         (format "%s-%s.%s" persist-file (md5 path) ext)))))
 
 (defun org-persist-write:index (container _)
@@ -687,16 +695,50 @@ COLLECTION is the plist holding data collection."
         (message "Missing write access rights to org-persist-directory: %S"
                  org-persist-directory))))
   (when (file-exists-p org-persist-directory)
-    (org-persist--write-elisp-file
-     (org-file-name-concat org-persist-directory org-persist-index-file)
-     org-persist--index
-     t t)
-    (org-file-name-concat org-persist-directory org-persist-index-file)))
+    (let ((index-file
+           (org-file-name-concat org-persist-directory org-persist-index-file)))
+      (org-persist--merge-index-with-disk)
+      (org-persist--write-elisp-file index-file org-persist--index t t)
+      (setq org-persist--index-age
+            (file-attribute-modification-time (file-attributes index-file)))
+      index-file)))
 
 (defun org-persist--save-index ()
-  "Save `org-persist--index."
+  "Save `org-persist--index'."
   (org-persist-write:index
    `(index ,org-persist--storage-version) nil))
+
+(defun org-persist--merge-index-with-disk ()
+  "Merge `org-persist--index' with the current index file on disk."
+  (let* ((index-file
+          (org-file-name-concat org-persist-directory org-persist-index-file))
+         (disk-index
+          (and (file-exists-p index-file)
+               (org-file-newer-than-p index-file org-persist--index-age)
+               (org-persist-read:index `(index ,org-persist--storage-version) index-file nil)))
+         (combined-index
+          (org-persist--merge-index org-persist--index disk-index)))
+    (when disk-index
+      (setq org-persist--index combined-index
+            org-persist--index-age
+            (file-attribute-modification-time (file-attributes index-file))))))
+
+(defun org-persist--merge-index (base other)
+  "Attempt to merge new index items in OTHER into BASE.
+Items with different details are considered too difficult, and skipped."
+  (if other
+      (let ((new (cl-set-difference other base :test #'equal))
+            (base-files (mapcar (lambda (s) (plist-get s :persist-file)) base))
+            (combined (reverse base)))
+        (dolist (item (nreverse new))
+          (unless (or (memq 'index (mapcar #'car (plist-get item :container)))
+                      (not (file-exists-p
+                            (org-file-name-concat org-persist-directory
+                                                  (plist-get item :persist-file))))
+                      (member (plist-get item :persist-file) base-files))
+            (push item combined)))
+        (nreverse combined))
+    base))
 
 ;;;; Public API
 
@@ -771,6 +813,7 @@ ASSOCIATED can be a plist, a buffer, or a string.
 A buffer is treated as (:buffer ASSOCIATED).
 A string is treated as (:file ASSOCIATED).
 When LOAD? is non-nil, load the data instead of reading."
+  (unless org-persist--index (org-persist--load-index))
   (setq associated (org-persist--normalize-associated associated))
   (setq container (org-persist--normalize-container container))
   (unless (and org-persist-disable-when-emacs-Q
@@ -856,9 +899,16 @@ When IGNORE-RETURN is non-nil, just return t on success without calling
       (setq associated (org-persist--normalize-associated (get-file-buffer (plist-get associated :file)))))
     (let ((collection (org-persist--get-collection container associated)))
       (setf collection (plist-put collection :associated associated))
-      (unless (seq-find (lambda (v)
-                          (run-hook-with-args-until-success 'org-persist-before-write-hook v associated))
-                        (plist-get collection :container))
+      (unless (or
+               ;; Prevent data leakage from encrypted files.
+               ;; We do it in somewhat paranoid manner and do not
+               ;; allow anything related to encrypted files to be
+               ;; written.
+               (and (plist-get associated :file)
+                    (string-match-p epa-file-name-regexp (plist-get associated :file)))
+               (seq-find (lambda (v)
+                           (run-hook-with-args-until-success 'org-persist-before-write-hook v associated))
+                         (plist-get collection :container)))
         (when (or (file-exists-p org-persist-directory) (org-persist--save-index))
           (let ((file (org-file-name-concat org-persist-directory (plist-get collection :persist-file)))
                 (data (mapcar (lambda (c) (cons c (org-persist-write:generic c collection)))
@@ -901,37 +951,61 @@ Do nothing in an indirect buffer."
 
 (defalias 'org-persist-gc:elisp #'ignore)
 (defalias 'org-persist-gc:index #'ignore)
+(defalias 'org-persist-gc:version #'ignore)
+(defalias 'org-persist-gc:file #'ignore)
+(defalias 'org-persist-gc:url #'ignore)
 
-(defun org-persist-gc:file (container collection)
-  "Garbage collect file CONTAINER in COLLECTION."
-  (let ((file (org-persist-read container (plist-get collection :associated))))
-    (when (file-exists-p file)
-      (delete-file file))))
-
-(defun org-persist-gc:url (container collection)
-  "Garbage collect url CONTAINER in COLLECTION."
-  (let ((file (org-persist-read container (plist-get collection :associated))))
-    (when (file-exists-p file)
-      (delete-file file))))
-
-(defmacro org-persist--gc-persist-file (persist-file)
+(defun org-persist--gc-persist-file (persist-file)
   "Garbage collect PERSIST-FILE."
-  `(when (file-exists-p ,persist-file)
-     (delete-file ,persist-file)
-     (when (org-directory-empty-p (file-name-directory ,persist-file))
-       (delete-directory (file-name-directory ,persist-file)))))
+  (when (file-exists-p persist-file)
+    (delete-file persist-file)
+    (when (org-directory-empty-p (file-name-directory persist-file))
+      (delete-directory (file-name-directory persist-file)))))
+
+(defmacro org-persist-associated-files:generic (container collection)
+  "List associated files in `org-persist-directory' of CONTAINER in COLLECTION."
+  `(let* ((c (org-persist--normalize-container ,container))
+          (assocf-func-symbol (intern (format "org-persist-associated-files:%s" (car c)))))
+     (if (fboundp assocf-func-symbol)
+         (funcall assocf-func-symbol c ,collection)
+       (error "org-persist: Read function %s not defined"
+              assocf-func-symbol))))
+
+(defalias 'org-persist-associated-files:elisp #'ignore)
+(defalias 'org-persist-associated-files:index #'ignore)
+(defalias 'org-persist-associated-files:version #'ignore)
+
+(defun org-persist-associated-files:file (container collection)
+  "List file CONTAINER associated files of COLLECTION in `org-persist-directory'."
+  (let ((file (org-persist-read container (plist-get collection :associated))))
+    (when (file-exists-p file)
+      (list file))))
+
+(defun org-persist-associated-files:url (container collection)
+  "List url CONTAINER associated files of COLLECTION in `org-persist-directory'."
+  (let ((file (org-persist-read container (plist-get collection :associated))))
+    (when (file-exists-p file)
+      (list file))))
 
 (defun org-persist-gc ()
-  "Remove expired or unregistered containers.
+  "Remove expired or unregistered containers and orphaned files.
 Also, remove containers associated with non-existing files."
+  (if org-persist--index
+      (org-persist--merge-index-with-disk)
+    (org-persist--load-index))
   (unless (and org-persist-disable-when-emacs-Q
                ;; FIXME: This is relying on undocumented fact that
                ;; Emacs sets `user-init-file' to nil when loaded with
                ;; "-Q" argument.
                (not user-init-file))
-    (let (new-index (remote-files-num 0))
+    (let (new-index
+          (remote-files-num 0)
+          (orphan-files
+           (delete (org-file-name-concat org-persist-directory org-persist-index-file)
+                   (directory-files-recursively org-persist-directory ".+"))))
       (dolist (collection org-persist--index)
         (let* ((file (plist-get (plist-get collection :associated) :file))
+               (web-file (and file (string-match-p "\\`https?://" file)))
                (file-remote (when file (file-remote-p file)))
                (persist-file (when (plist-get collection :persist-file)
                                (org-file-name-concat
@@ -940,7 +1014,8 @@ Also, remove containers associated with non-existing files."
                (expired? (org-persist--gc-expired-p
                           (plist-get collection :expiry) collection)))
           (when persist-file
-            (when file
+            (setq orphan-files (delete persist-file orphan-files))
+            (when (and file (not web-file))
               (when file-remote (cl-incf remote-files-num))
               (unless (if (not file-remote)
                           (file-exists-p file)
@@ -949,12 +1024,18 @@ Also, remove containers associated with non-existing files."
                           ('check-existence
                            (file-exists-p file))
                           ((pred numberp)
-                           (<= org-persist-remote-files remote-files-num))
+                           (< org-persist-remote-files remote-files-num))
                           (_ nil)))
                 (setq expired? t)))
             (if expired?
                 (org-persist--gc-persist-file persist-file)
-              (push collection new-index)))))
+              (push collection new-index)
+              (dolist (container (plist-get collection :container))
+                (dolist (associated-file
+                         (org-persist-associated-files:generic
+                          container collection))
+                  (setq orphan-files (delete associated-file orphan-files))))))))
+      (mapc #'org-persist--gc-persist-file orphan-files)
       (setq org-persist--index (nreverse new-index)))))
 
 ;; Automatically write the data, but only when we have write access.

@@ -102,6 +102,7 @@
 
 (require 'org-cycle)
 (defvaralias 'org-hide-block-startup 'org-cycle-hide-block-startup)
+(defvaralias 'org-hide-drawer-startup 'org-cycle-hide-drawer-startup)
 (defvaralias 'org-pre-cycle-hook 'org-cycle-pre-hook)
 (defvaralias 'org-tab-first-hook 'org-cycle-tab-first-hook)
 (defalias 'org-global-cycle #'org-cycle-global)
@@ -2442,6 +2443,8 @@ These are overlaid over the default ISO format if the variable
 end of the second format.  The custom formats are also honored by export
 commands, if custom time display is turned on at the time of export.
 
+This variable also affects how timestamps are exported.
+
 Leading \"<\" and trailing \">\" pair will be stripped from the format
 strings."
   :group 'org-time
@@ -4596,8 +4599,8 @@ is available.  This option applies only if FILE is a URL."
 This checks every pattern in `org-safe-remote-resources', and
 returns non-nil if any of them match."
   (let ((uri-patterns org-safe-remote-resources)
-        (file-uri (and buffer-file-name
-                       (concat "file://" (file-truename buffer-file-name))))
+        (file-uri (and (buffer-file-name (buffer-base-buffer))
+                       (concat "file://" (file-truename (buffer-file-name (buffer-base-buffer))))))
         match-p)
     (while (and (not match-p) uri-patterns)
       (setq match-p (or (string-match-p (car uri-patterns) uri)
@@ -4608,7 +4611,8 @@ returns non-nil if any of them match."
 (defun org--confirm-resource-safe (uri)
   "Ask the user if URI should be considered safe, returning non-nil if so."
   (unless noninteractive
-    (let ((current-file (and buffer-file-name (file-truename buffer-file-name)))
+    (let ((current-file (and (buffer-file-name (buffer-base-buffer))
+                             (file-truename (buffer-file-name (buffer-base-buffer)))))
           (domain (and (string-match
                         (rx (seq "http" (? "s") "://")
                             (optional (+ (not (any "@/\n"))) "@")
@@ -7220,7 +7224,8 @@ If yes, remember the marker and the distance to BEG."
   (setq org-markers-to-move nil))
 
 (defun org-narrow-to-subtree (&optional element)
-  "Narrow buffer to the current subtree."
+  "Narrow buffer to the current subtree.
+Use the command `\\[widen]' to see the whole buffer again."
   (interactive)
   (if (org-element--cache-active-p)
       (let* ((heading (org-element-lineage
@@ -7242,7 +7247,8 @@ If yes, remember the marker and the distance to BEG."
 	         (point))))))))
 
 (defun org-toggle-narrow-to-subtree ()
-  "Narrow to the subtree at point or widen a narrowed buffer."
+  "Narrow to the subtree at point or widen a narrowed buffer.
+Use the command `\\[widen]' to see the whole buffer again."
   (interactive)
   (if (buffer-narrowed-p)
       (progn (widen) (message "Buffer widen"))
@@ -7250,7 +7256,8 @@ If yes, remember the marker and the distance to BEG."
     (message "Buffer narrowed to current subtree")))
 
 (defun org-narrow-to-block ()
-  "Narrow buffer to the current block."
+  "Narrow buffer to the current block.
+Use the command `\\[widen]' to see the whole buffer again."
   (interactive)
   (let* ((case-fold-search t)
 	 (blockp (org-between-regexps-p "^[ \t]*#\\+begin_.*"
@@ -8349,11 +8356,11 @@ they must return nil.")
 The thing can be a link, citation, timestamp, footnote, src-block or
 tags.
 
-When point is on a link, follow it.  Normally, files will be
-opened by an appropriate application.  If the optional prefix
-argument ARG is non-nil, Emacs will visit the file.  With
-a double prefix argument, try to open outside of Emacs, in the
-application the system uses for this file type.
+When point is on a link, follow it.  Normally, files will be opened by
+an appropriate application (see `org-file-apps').  If the optional prefix
+argument ARG is non-nil, Emacs will visit the file.  With a double
+prefix argument, try to open outside of Emacs, in the application the
+system uses for this file type.
 
 When point is on a timestamp, open the agenda at the day
 specified.
@@ -11380,7 +11387,7 @@ See also `org-scan-tags'."
 			     (pv (match-string 7 term))
 			     (regexp (eq (string-to-char pv) ?{))
 			     (strp (eq (string-to-char pv) ?\"))
-			     (timep (string-match-p "^\"[[<][0-9]+.*[]>]\"$" pv))
+			     (timep (string-match-p "^\"[[<]\\(?:[0-9]+\\|now\\|today\\|tomorrow\\|[+-][0-9]+[dmwy]\\).*[]>]\"$" pv))
 			     (po (org-op-to-function (match-string 6 term)
 						     (if timep 'time strp))))
 			(setq pv (if (or regexp strp) (substring pv 1 -1) pv))
@@ -15436,14 +15443,12 @@ an embedded LaTeX fragment, let `texmathp' do its job.
     (setq texmathp-why '("cdlatex-math-symbol in org-mode" . 0))
     t)
    (t
-    (let ((p (org-inside-LaTeX-fragment-p)))
-      (when p ;; FIXME: Shouldn't we return t when `p' is nil?
-	(if (member (car p)
-	            (plist-get org-format-latex-options :matchers))
-	    (progn
-	      (setq texmathp-why '("Org mode embedded math" . 0))
-	      t)
-	  (apply orig-fun args)))))))
+    (let ((element (org-element-context)))
+      (or (not (org-inside-LaTeX-fragment-p element))
+          (if (not (eq (org-element-type element) 'latex-fragment))
+              (apply orig-fun args)
+            (setq texmathp-why '("Org mode embedded math" . 0))
+	    t))))))
 
 (defun turn-on-org-cdlatex ()
   "Unconditionally turn on `org-cdlatex-mode'."
@@ -15546,50 +15551,13 @@ environment remains unintended."
 
 ;;;; LaTeX fragments
 
-(defun org-inside-LaTeX-fragment-p ()
-  "Test if point is inside a LaTeX fragment.
-I.e. after a \\begin, \\(, \\[, $, or $$, without the corresponding closing
-sequence appearing also before point.
-Even though the matchers for math are configurable, this function assumes
-that \\begin, \\(, \\[, and $$ are always used.  Only the single dollar
-delimiters are skipped when they have been removed by customization.
-The return value is nil, or a cons cell with the delimiter and the
-position of this delimiter.
+(defun org-inside-LaTeX-fragment-p (&optional element)
+  "Test if point is inside a LaTeX fragment or environment.
 
-This function does a reasonably good job, but can locally be fooled by
-for example currency specifications.  For example it will assume being in
-inline math after \"$22.34\".  The LaTeX fragment formatter will only format
-fragments that are properly closed, but during editing, we have to live
-with the uncertainty caused by missing closing delimiters.  This function
-looks only before point, not after."
-  (catch 'exit
-    (let ((pos (point))
-	  (dodollar (member "$" (plist-get org-format-latex-options :matchers)))
-	  (lim (progn
-		 (re-search-backward (concat "^\\(" paragraph-start "\\)") nil
-				     'move)
-		 (point)))
-	  dd-on str (start 0) m re)
-      (goto-char pos)
-      (when dodollar
-	(setq str (concat (buffer-substring lim (point)) "\000 X$.")
-	      re (nth 1 (assoc "$" org-latex-regexps)))
-	(while (string-match re str start)
-	  (cond
-	   ((= (match-end 0) (length str))
-	    (throw 'exit (cons "$" (+ lim (match-beginning 0) 1))))
-	   ((= (match-end 0) (- (length str) 5))
-	    (throw 'exit nil))
-	   (t (setq start (match-end 0))))))
-      (when (setq m (re-search-backward "\\(\\\\begin{[^}]*}\\|\\\\(\\|\\\\\\[\\)\\|\\(\\\\end{[^}]*}\\|\\\\)\\|\\\\\\]\\)\\|\\(\\$\\$\\)" lim t))
-	(goto-char pos)
-	(and (match-beginning 1) (throw 'exit (cons (match-string 1) m)))
-	(and (match-beginning 2) (throw 'exit nil))
-	;; count $$
-	(while (re-search-backward "\\$\\$" lim t)
-	  (setq dd-on (not dd-on)))
-	(goto-char pos)
-	(when dd-on (cons "$$" m))))))
+When optional argument ELEMENT is non-nil, it should be element/object
+at point."
+  (memq (org-element-type (or element (org-element-context)))
+        '(latex-fragment latex-environment)))
 
 (defun org-inside-latex-macro-p ()
   "Is point inside a LaTeX macro or its arguments?"
@@ -16322,6 +16290,10 @@ buffer boundaries with possible narrowing."
 					  (org-element-property :end link))
 					 (skip-chars-backward " \t")
 					 (point)))))
+                              ;; FIXME: See bug#59902.  We cannot rely
+                              ;; on Emacs to update image if the file
+                              ;; has changed.
+                              (image-flush image)
 			      (overlay-put ov 'display image)
 			      (overlay-put ov 'face 'default)
 			      (overlay-put ov 'org-image-overlay t)
@@ -16395,6 +16367,10 @@ buffer boundaries with possible narrowing."
   "Remove inline-display overlay if a corresponding region is modified."
   (when (and ov after)
     (delete ov org-inline-image-overlays)
+    ;; Clear image from cache to avoid image not updating upon
+    ;; changing on disk.  See Emacs bug#59902.
+    (when (overlay-get ov 'org-image-overlay)
+      (image-flush (overlay-get ov 'display)))
     (delete-overlay ov)))
 
 (defun org-remove-inline-images (&optional beg end)
@@ -21162,7 +21138,8 @@ ones already marked."
 	(goto-char (org-element-property :begin element))))))
 
 (defun org-narrow-to-element ()
-  "Narrow buffer to current element."
+  "Narrow buffer to current element.
+Use the command `\\[widen]' to see the whole buffer again."
   (interactive)
   (let ((elem (org-element-at-point)))
     (cond
