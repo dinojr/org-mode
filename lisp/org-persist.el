@@ -1,6 +1,6 @@
 ;;; org-persist.el --- Persist cached data across Emacs sessions         -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021-2022 Free Software Foundation, Inc.
+;; Copyright (C) 2021-2023 Free Software Foundation, Inc.
 
 ;; Author: Ihor Radchenko <yantar92 at gmail dot com>
 ;; Keywords: cache, storage
@@ -27,24 +27,44 @@
 ;; implementation is not meant to be used to store important data -
 ;; all the caches should be safe to remove at any time.
 ;;
+;; Entry points are `org-persist-register', `org-persist-write',
+;; `org-persist-read', and `org-persist-load'.
+;;
+;; `org-persist-register' will mark the data to be stored.  By
+;; default, the data is written on disk before exiting Emacs session.
+;; Optionally, the data can be written immediately.
+;;
+;; `org-persist-write' will immediately write the data onto disk.
+;;
+;; `org-persist-read' will read the data and return its value or list
+;; of values for each requested container.
+;;
+;; `org-persist-load' will read the data with side effects.  For
+;; example, loading `elisp' container will assign the values to
+;; variables.
+;; 
 ;; Example usage:
 ;;
 ;; 1. Temporarily cache Elisp symbol value to disk.  Remove upon
 ;;    closing Emacs:
 ;;    (org-persist-write 'variable-symbol)
 ;;    (org-persist-read 'variable-symbol) ;; read the data later
+;;
 ;; 2. Temporarily cache a remote URL file to disk.  Remove upon
 ;;    closing Emacs:
 ;;    (org-persist-write 'url "https://static.fsf.org/common/img/logo-new.png")
 ;;    (org-persist-read 'url "https://static.fsf.org/common/img/logo-new.png")
 ;;    `org-persist-read' will return the cached file location or nil if cached file
 ;;    has been removed.
+;;
 ;; 3. Temporarily cache a file, including TRAMP path to disk:
 ;;    (org-persist-write 'file "/path/to/file")
+;;
 ;; 4. Cache file or URL while some other file exists.
 ;;    (org-persist-register '(url "https://static.fsf.org/common/img/logo-new.png") '(:file "/path to the other file") :expiry 'never :write-immediately t)
 ;;    or, if the other file is current buffer file
 ;;    (org-persist-register '(url "https://static.fsf.org/common/img/logo-new.png") (current-buffer) :expiry 'never :write-immediately t)
+;;
 ;; 5. Cache value of a Elisp variable to disk.  The value will be
 ;;    saved and restored automatically (except buffer-local
 ;;    variables).
@@ -58,11 +78,25 @@
 ;;    ;; Save buffer-local variable preserving circular links:
 ;;    (org-persist-register 'org-element--headline-cache (current-buffer)
 ;;               :inherit 'org-element--cache)
+;;
 ;; 6. Load variable by side effects assigning variable symbol:
 ;;    (org-persist-load 'variable-symbol (current-buffer))
+;;
 ;; 7. Version variable value:
 ;;    (org-persist-register '((elisp variable-symbol) (version "2.0")))
-;; 8. Cancel variable persistence:
+;;
+;; 8. Define a named container group:
+;;
+;;    (let ((info1 "test")
+;;          (info2 "test 2"))
+;;      (org-persist-register
+;;         `("Named data" (elisp info1 local) (elisp info2 local))
+;;         nil :write-immediately t))
+;;    (org-persist-read
+;;       "Named data"
+;;       nil nil nil :read-related t) ; => ("Named data" "test" "test2")
+;;
+;; 9. Cancel variable persistence:
 ;;    (org-persist-unregister 'variable-symbol 'all) ; in all buffers
 ;;    (org-persist-unregister 'variable-symbol) ;; global variable
 ;;    (org-persist-unregister 'variable-symbol (current-buffer)) ;; buffer-local
@@ -82,7 +116,8 @@
 ;;
 ;; The data collections can be versioned and removed upon expiry.
 ;;
-;; In the code below I will use the following naming conventions:
+;; In the code below, I will use the following naming conventions:
+;;
 ;; 1. Container :: a type of data to be stored
 ;;    Containers can store elisp variables, files, and version
 ;;    numbers.  Each container can be customized with container
@@ -90,14 +125,57 @@
 ;;    variable symbol.  (elisp variable) is a container storing
 ;;    Lisp variable value.  Similarly, (version "2.0") container
 ;;    will store version number.
+;;
+;;    Container can also refer to a list of simple containers:
+;;
+;;    ;; Three containers stored together.
+;;    '((elisp variable) (file "/path") (version "x.x"))
+;;
+;;    Providing a single container from the list to `org-persist-read'
+;;    is sufficient to retrieve all the containers.
+;;
+;;    Example:
+;;
+;;    (org-persist-register '((version "My data") (file "/path/to/file")) '(:key "key") :write-immediately t)
+;;    (org-persist-read '(version "My data") '(:key "key")) ;; => '("My data" "/path/to/file/copy")
+;;
+;;    Containers can also take a short form:
+;;
+;;    '("String" file '(quoted elisp "value") :keyword)
+;;    is the same as
+;;    '((elisp-data "String") (file nil)
+;;      (elisp-data '(quoted elisp "value")) (elisp-data :keyword))
+;;
+;;    Note that '(file "String" (elisp value)) would be interpreted as
+;;    `file' container with "String" path and extra options.
+;;
 ;; 2. Associated :: an object the container is associated with.  The
 ;;    object can be a buffer, file, inode number, file contents hash,
 ;;    a generic key, or multiple of them.  Associated can also be nil.
+;;
+;;    Example:
+;;
+;;    '(:file "/path/to/file" :inode number :hash buffer-hash :key arbitrary-key)
+;;
+;;    When several objects are associated with a single container, it
+;;    is not necessary to provide them all to access the container.
+;;    Just using a single :file/:inode/:hash/:key is sufficient.
+;;
 ;; 3. Data collection :: a list of containers linked to an associated
 ;;    object/objects.  Each data collection can also have auxiliary
 ;;    records.  Their only purpose is readability of the collection
 ;;    index.
+;;
+;;    Example:
+;;
+;;    (:container
+;;     ((index "2.7"))
+;;     :persist-file "ba/cef3b7-e31c-4791-813e-8bd0bf6c5f9c"
+;;     :associated nil :expiry never
+;;     :last-access 1672207741.6422956 :last-access-hr "2022-12-28T09:09:01+0300")
+;;
 ;; 4. Index file :: a file listing all the stored data collections.
+;;
 ;; 5. Persist file :: a file holding data values or references to
 ;;    actual data values for a single data collection.  This file
 ;;    contains an alist associating each data container in data
@@ -111,6 +189,7 @@
 ;;
 ;; Each collection is represented as a plist containing the following
 ;; properties:
+;;
 ;; - `:container'   : list of data continers to be stored in single
 ;;                    file;
 ;; - `:persist-file': data file name;
@@ -120,21 +199,36 @@
 ;; - all other keywords are ignored
 ;;
 ;; The available types of data containers are:
-;; 1. (file variable-symbol) or just variable-symbol :: Storing
-;;    elisp variable data.
+;; 1. (elisp variable-symbol scope) or just variable-symbol :: Storing
+;;    elisp variable data.  SCOPE can be
+;;
+;;    - `nil'    :: Use buffer-local value in associated :file or global
+;;                 value if no :file is associated.
+;;    - string :: Use buffer-local value in buffer named STRING or
+;;                with STRING `buffer-file-name'.
+;;    - `local' :: Use symbol value in current scope.
+;;                 Note: If `local' scope is used without writing the
+;;                 value immediately, the actual stored value is
+;;                 undefined.
+;;
 ;; 2. (file) :: Store a copy of the associated file preserving the
 ;;    extension.
+
 ;;    (file "/path/to/a/file") :: Store a copy of the file in path.
+;;
 ;; 3. (version "version number") :: Version the data collection.
 ;;     If the stored collection has different version than "version
 ;;     number", disregard it.
-;; 4. (url) :: Store a downloaded copy of URL object.
+;;
+;; 4. (url) :: Store a downloaded copy of URL object given by
+;;             associated :file.
+;;    (url "path") :: Use "path" instead of associated :file.
 ;;
 ;; The data collections can expire, in which case they will be removed
 ;; from the persistent storage at the end of Emacs session.  The
 ;; expiry condition can be set when saving/registering data
 ;; containers.  The expirty condition can be `never' - data will never
-;; expire; `nil' - data will expire at the end of current Emacs session;
+;; expire; nil - data will expire at the end of current Emacs session;
 ;; a number - data will expire after the number days from last access;
 ;; a function - data will expire if the function, called with a single
 ;; argument - collection, returns non-nil.
@@ -145,7 +239,8 @@
 ;; expiry is controlled by `org-persist-remote-files' instead.
 ;;
 ;; Data loading/writing can be more accurately controlled using
-;; `org-persist-before-write-hook', `org-persist-before-read-hook', and `org-persist-after-read-hook'.
+;; `org-persist-before-write-hook', `org-persist-before-read-hook',
+;; and `org-persist-after-read-hook'.
 
 ;;; Code:
 
@@ -161,7 +256,7 @@
 (declare-function org-at-heading-p "org" (&optional invisible-not-ok))
 
 
-(defconst org-persist--storage-version "2.7"
+(defconst org-persist--storage-version "3.2"
   "Persistent storage layout version.")
 
 (defgroup org-persist nil
@@ -219,11 +314,14 @@ function will be called with a single argument - collection."
                  (number :tag "Keep N days")
                  (function :tag "Function")))
 
-(defconst org-persist-index-file "index"
+(defconst org-persist-index-file "index.eld"
   "File name used to store the data index.")
 
-(defvar org-persist-disable-when-emacs-Q t
-  "Disable persistence when Emacs is called with -Q command line arg.")
+(defvar org-persist--disable-when-emacs-Q t
+  "Disable persistence when Emacs is called with -Q command line arg.
+When non-nil, this sets `org-persist-directory' to temporary directory.
+
+This variable must be set before loading org-persist library.")
 
 (defvar org-persist-before-write-hook nil
   "Abnormal hook ran before saving data.
@@ -334,6 +432,7 @@ FORMAT and ARGS are passed to `message'."
     (unless (file-exists-p (file-name-directory file))
       (make-directory (file-name-directory file) t))
     (with-temp-file file
+      (insert ";;   -*- mode: lisp-data; -*-\n")
       (if pp
           (pp data (current-buffer))
         (prin1 data (current-buffer))))
@@ -433,40 +532,46 @@ Return PLIST."
           (when key (remhash (cons cont (list :key key)) org-persist--index-hash))))
       (setq org-persist--index (delq existing org-persist--index)))))
 
-(defun org-persist--get-collection (container &optional associated &rest misc)
+(defun org-persist--get-collection (container &optional associated misc)
   "Return or create collection used to store CONTAINER for ASSOCIATED.
 When ASSOCIATED is nil, it is a global CONTAINER.
 ASSOCIATED can also be a (:buffer buffer) or buffer, (:file file-path)
 or file-path, (:inode inode), (:hash hash), or or (:key key).
-MISC, if non-nil will be appended to the collection."
+MISC, if non-nil will be appended to the collection.  It must be a plist."
   (unless (and (listp container) (listp (car container)))
     (setq container (list container)))
   (setq associated (org-persist--normalize-associated associated))
-  (unless (equal misc '(nil))
-    (setq associated (append associated misc)))
+  (when (and misc (or (not (listp misc)) (= 1 (% (length misc) 2))))
+    (error "org-persist: Not a plist: %S" misc))
   (or (org-persist--find-index
        `( :container ,(org-persist--normalize-container container)
           :associated ,associated))
       (org-persist--add-to-index
-       (list :container (org-persist--normalize-container container)
-             :persist-file
-             (replace-regexp-in-string "^.." "\\&/" (org-id-uuid))
-             :associated associated))))
+       (nconc
+        (list :container (org-persist--normalize-container container)
+              :persist-file
+              (replace-regexp-in-string "^.." "\\&/" (org-id-uuid))
+              :associated associated)
+        misc))))
 
 ;;;; Reading container data.
 
-(defun org-persist--normalize-container (container)
-  "Normalize CONTAINER representation into (type . settings)."
-  (if (and (listp container) (listp (car container)))
-      (mapcar #'org-persist--normalize-container container)
-    (pcase container
-      ((or `elisp `version `file `index `url)
-       (list container nil))
-      ((pred symbolp)
-       (list `elisp container))
-      (`(,(or `elisp `version `file `index `url) . ,_)
-       container)
-      (_ (error "org-persist: Unknown container type: %S" container)))))
+(defun org-persist--normalize-container (container &optional inner)
+  "Normalize CONTAINER representation into (type . settings).
+
+When INNER is non-nil, do not try to match as list of containers."
+  (pcase container
+    ((or `elisp `elisp-data `version `file `index `url)
+     `(,container nil))
+    ((or (pred keywordp) (pred stringp) `(quote . ,_))
+     `(elisp-data ,container))
+    ((pred symbolp)
+     `(elisp ,container))
+    (`(,(or `elisp `elisp-data `version `file `index `url) . ,_)
+     container)
+    ((and (pred listp) (guard (not inner)))
+     (mapcar (lambda (c) (org-persist--normalize-container c 'inner)) container))
+    (_ (error "org-persist: Unknown container type: %S" container))))
 
 (defvar org-persist--associated-buffer-cache (make-hash-table :weakness 'key)
   "Buffer hash cache.")
@@ -531,9 +636,11 @@ COLLECTION is the plist holding data collection."
   "Read elisp container and return LISP-VALUE."
   lisp-value)
 
-(defun org-persist-read:version (container _ __)
-  "Read version CONTAINER."
+(defun org-persist-read:elisp-data (container _ __)
+  "Read elisp-data CONTAINER."
   (cadr container))
+
+(defalias 'org-persist-read:version #'org-persist-read:elisp-data)
 
 (defun org-persist-read:file (_ path __)
   "Read file container from PATH."
@@ -586,6 +693,7 @@ COLLECTION is the plist holding data collection."
           (set lisp-symbol lisp-value))
       (set lisp-symbol lisp-value))))
 
+(defalias 'org-persist-load:elisp-data #'org-persist-read:elisp-data)
 (defalias 'org-persist-load:version #'org-persist-read:version)
 (defalias 'org-persist-load:file #'org-persist-read:file)
 
@@ -629,17 +737,31 @@ COLLECTION is the plist holding data collection."
 
 (defun org-persist-write:elisp (container collection)
   "Write elisp CONTAINER according to COLLECTION."
-  (if (and (plist-get (plist-get collection :associated) :file)
-           (get-file-buffer (plist-get (plist-get collection :associated) :file)))
-      (let ((buf (get-file-buffer (plist-get (plist-get collection :associated) :file))))
-        ;; FIXME: There is `buffer-local-boundp' introduced in Emacs 28.
-        ;; Not using it yet to keep backward compatibility.
-        (condition-case nil
-            (buffer-local-value (cadr container) buf)
-          (void-variable nil)))
-    (when (boundp (cadr container))
-      (symbol-value (cadr container)))))
+  (let ((scope (nth 2 container)))
+    (pcase scope
+      ((pred stringp)
+       (when-let ((buf (or (get-buffer scope)
+                           (get-file-buffer scope))))
+         ;; FIXME: There is `buffer-local-boundp' introduced in Emacs 28.
+         ;; Not using it yet to keep backward compatibility.
+         (condition-case nil
+             (buffer-local-value (cadr container) buf)
+           (void-variable nil))))
+      (`local
+       (when (boundp (cadr container))
+         (symbol-value (cadr container))))
+      (`nil
+       (if-let ((buf (and (plist-get (plist-get collection :associated) :file)
+                          (get-file-buffer (plist-get (plist-get collection :associated) :file)))))
+           ;; FIXME: There is `buffer-local-boundp' introduced in Emacs 28.
+           ;; Not using it yet to keep backward compatibility.
+           (condition-case nil
+               (buffer-local-value (cadr container) buf)
+             (void-variable nil))
+         (when (boundp (cadr container))
+           (symbol-value (cadr container))))))))
 
+(defalias 'org-persist-write:elisp-data #'ignore)
 (defalias 'org-persist-write:version #'ignore)
 
 (defun org-persist-write:file (c collection)
@@ -654,9 +776,10 @@ COLLECTION is the plist holding data collection."
              (file-copy (org-file-name-concat
                          org-persist-directory
                          (format "%s-%s.%s" persist-file (md5 path) ext))))
-        (unless (file-exists-p (file-name-directory file-copy))
-          (make-directory (file-name-directory file-copy) t))
-        (copy-file path file-copy 'overwrite)
+        (unless (file-exists-p file-copy)
+          (unless (file-exists-p (file-name-directory file-copy))
+            (make-directory (file-name-directory file-copy) t))
+          (copy-file path file-copy 'overwrite))
         (format "%s-%s.%s" persist-file (md5 path) ext)))))
 
 (defun org-persist-write:url (c collection)
@@ -757,7 +880,8 @@ last access, or a function accepting a single argument - collection.
 EXPIRY key has no effect when INHERIT is non-nil.
 Optional key WRITE-IMMEDIATELY controls whether to save the container
 data immediately.
-MISC will be appended to CONTAINER.
+MISC will be appended to the collection.  It must be alternating :KEY
+VALUE pairs.
 When WRITE-IMMEDIATELY is non-nil, the return value will be the same
 with `org-persist-write'."
   (unless org-persist--index (org-persist--load-index))
@@ -782,20 +906,22 @@ with `org-persist-write'."
       (add-hook 'kill-buffer-hook #'org-persist-write-all-buffer nil 'local)))
   (when write-immediately (org-persist-write container associated)))
 
-(defun org-persist-unregister (container &optional associated)
+(cl-defun org-persist-unregister (container &optional associated &key remove-related)
   "Unregister CONTAINER in ASSOCIATED to be persistent.
-When ASSOCIATED is `all', unregister CONTAINER everywhere."
+When ASSOCIATED is `all', unregister CONTAINER everywhere.
+When REMOVE-RELATED is non-nil, remove all the containers stored with
+the CONTAINER as well."
   (unless org-persist--index (org-persist--load-index))
   (setq container (org-persist--normalize-container container))
-  (setq associated (org-persist--normalize-associated associated))
   (if (eq associated 'all)
       (mapc (lambda (collection)
               (when (member container (plist-get collection :container))
-                (org-persist-unregister container (plist-get collection :associated))))
+                (org-persist-unregister container (plist-get collection :associated) :remove-related remove-related)))
             org-persist--index)
+    (setq associated (org-persist--normalize-associated associated))
     (let ((collection (org-persist--find-index `(:container ,container :associated ,associated))))
       (when collection
-        (if (= (length (plist-get collection :container)) 1)
+        (if (or remove-related (= (length (plist-get collection :container)) 1))
             (org-persist--remove-from-index collection)
           (plist-put collection :container
                      (remove container (plist-get collection :container)))
@@ -805,57 +931,72 @@ When ASSOCIATED is `all', unregister CONTAINER everywhere."
   "Hash table storing as-written data objects.
 
 This data is used to avoid reading the data multiple times.")
-(defun org-persist-read (container &optional associated hash-must-match load?)
+(cl-defun org-persist-read (container &optional associated hash-must-match load &key read-related)
   "Restore CONTAINER data for ASSOCIATED.
 When HASH-MUST-MATCH is non-nil, do not restore data if hash for
 ASSOCIATED file or buffer does not match.
+
 ASSOCIATED can be a plist, a buffer, or a string.
 A buffer is treated as (:buffer ASSOCIATED).
 A string is treated as (:file ASSOCIATED).
-When LOAD? is non-nil, load the data instead of reading."
+
+When LOAD is non-nil, load the data instead of reading.
+
+When READ-RELATED is non-nil, return the data stored alongside with
+CONTAINER as well.  For example:
+
+    (let ((info \"test\"))
+      (org-persist-register
+        \\=`(\"My data\" (elisp-data ,info))
+        nil :write-immediately t))
+    (org-persist-read \"My data\") ; => \"My data\"
+    (org-persist-read \"My data\" nil nil nil
+                      :read-related t) ; => (\"My data\" \"test\")"
   (unless org-persist--index (org-persist--load-index))
   (setq associated (org-persist--normalize-associated associated))
   (setq container (org-persist--normalize-container container))
-  (unless (and org-persist-disable-when-emacs-Q
-               ;; FIXME: This is relying on undocumented fact that
-               ;; Emacs sets `user-init-file' to nil when loaded with
-               ;; "-Q" argument.
-               (not user-init-file))
-    (let* ((collection (org-persist--find-index `(:container ,container :associated ,associated)))
-           (persist-file
-            (when collection
-              (org-file-name-concat
-               org-persist-directory
-               (plist-get collection :persist-file))))
-           (data nil))
-      (when (and collection
-                 (file-exists-p persist-file)
-                 (or (not (plist-get collection :expiry)) ; current session
-                     (not (org-persist--gc-expired-p
-                         (plist-get collection :expiry) collection)))
-                 (or (not hash-must-match)
-                     (and (plist-get associated :hash)
-                          (equal (plist-get associated :hash)
-                                 (plist-get (plist-get collection :associated) :hash)))))
-        (unless (seq-find (lambda (v)
-                            (run-hook-with-args-until-success 'org-persist-before-read-hook v associated))
-                          (plist-get collection :container))
-          (setq data (or (gethash persist-file org-persist--write-cache)
-                         (org-persist--read-elisp-file persist-file)))
-          (when data
-            (cl-loop for container in (plist-get collection :container)
-                     with result = nil
-                     do
-                     (if load?
-                         (push (org-persist-load:generic container (alist-get container data nil nil #'equal) collection) result)
-                       (push (org-persist-read:generic container (alist-get container data nil nil #'equal) collection) result))
-                     (run-hook-with-args 'org-persist-after-read-hook container associated)
-                     finally return (if (= 1 (length result)) (car result) result))))))))
+  (let* ((collection (org-persist--find-index `(:container ,container :associated ,associated)))
+         (persist-file
+          (when collection
+            (org-file-name-concat
+             org-persist-directory
+             (plist-get collection :persist-file))))
+         (data nil))
+    (when (and collection
+               (or (not (plist-get collection :expiry)) ; current session
+                   (not (org-persist--gc-expired-p
+                       (plist-get collection :expiry) collection)))
+               (or (not hash-must-match)
+                   (and (plist-get associated :hash)
+                        (equal (plist-get associated :hash)
+                               (plist-get (plist-get collection :associated) :hash))))
+               (or (file-exists-p persist-file)
+                   ;; Attempt to write data if it is not yet written.
+                   (progn
+                     (org-persist-write container associated 'no-read)
+                     (file-exists-p persist-file))))
+      (unless (seq-find (lambda (v)
+                          (run-hook-with-args-until-success 'org-persist-before-read-hook v associated))
+                        (plist-get collection :container))
+        (setq data (or (gethash persist-file org-persist--write-cache)
+                       (org-persist--read-elisp-file persist-file)))
+        (when data
+          (cl-loop for c in (plist-get collection :container)
+                   with result = nil
+                   do
+                   (when (or read-related
+                             (equal c container)
+                             (member c container))
+                     (if load
+                         (push (org-persist-load:generic c (alist-get c data nil nil #'equal) collection) result)
+                       (push (org-persist-read:generic c (alist-get c data nil nil #'equal) collection) result)))
+                   (run-hook-with-args 'org-persist-after-read-hook c associated)
+                   finally return (if (= 1 (length result)) (car result) (nreverse result))))))))
 
-(defun org-persist-load (container &optional associated hash-must-match)
+(cl-defun org-persist-load (container &optional associated hash-must-match &key read-related)
   "Load CONTAINER data for ASSOCIATED.
 The arguments have the same meaning as in `org-persist-read'."
-  (org-persist-read container associated hash-must-match t))
+  (org-persist-read container associated hash-must-match t :read-related read-related))
 
 (defun org-persist-load-all (&optional associated)
   "Restore all the persistent data associated with ASSOCIATED."
@@ -886,62 +1027,72 @@ The return value is nil when writing fails and the written value (as
 returned by `org-persist-read') on success.
 When IGNORE-RETURN is non-nil, just return t on success without calling
 `org-persist-read'."
-  (unless (and org-persist-disable-when-emacs-Q
-               ;; FIXME: This is relying on undocumented fact that
-               ;; Emacs sets `user-init-file' to nil when loaded with
-               ;; "-Q" argument.
-               (not user-init-file))
-    (setq associated (org-persist--normalize-associated associated))
-    ;; Update hash
-    (when (and (plist-get associated :file)
-               (plist-get associated :hash)
-               (get-file-buffer (plist-get associated :file)))
-      (setq associated (org-persist--normalize-associated (get-file-buffer (plist-get associated :file)))))
-    (let ((collection (org-persist--get-collection container associated)))
-      (setf collection (plist-put collection :associated associated))
-      (unless (or
-               ;; Prevent data leakage from encrypted files.
-               ;; We do it in somewhat paranoid manner and do not
-               ;; allow anything related to encrypted files to be
-               ;; written.
-               (and (plist-get associated :file)
-                    (string-match-p epa-file-name-regexp (plist-get associated :file)))
-               (seq-find (lambda (v)
-                           (run-hook-with-args-until-success 'org-persist-before-write-hook v associated))
-                         (plist-get collection :container)))
-        (when (or (file-exists-p org-persist-directory) (org-persist--save-index))
-          (let ((file (org-file-name-concat org-persist-directory (plist-get collection :persist-file)))
-                (data (mapcar (lambda (c) (cons c (org-persist-write:generic c collection)))
-                              (plist-get collection :container))))
-            (puthash file data org-persist--write-cache)
-            (org-persist--write-elisp-file file data)
-            (or ignore-return (org-persist-read container associated))))))))
+  (setq associated (org-persist--normalize-associated associated))
+  ;; Update hash
+  (when (and (plist-get associated :file)
+             (plist-get associated :hash)
+             (get-file-buffer (plist-get associated :file)))
+    (setq associated (org-persist--normalize-associated (get-file-buffer (plist-get associated :file)))))
+  (let ((collection (org-persist--get-collection container associated)))
+    (setf collection (plist-put collection :associated associated))
+    (unless (or
+             ;; Prevent data leakage from encrypted files.
+             ;; We do it in somewhat paranoid manner and do not
+             ;; allow anything related to encrypted files to be
+             ;; written.
+             (and (plist-get associated :file)
+                  (string-match-p epa-file-name-regexp (plist-get associated :file)))
+             (seq-find (lambda (v)
+                         (run-hook-with-args-until-success 'org-persist-before-write-hook v associated))
+                       (plist-get collection :container)))
+      (when (or (file-exists-p org-persist-directory) (org-persist--save-index))
+        (let ((file (org-file-name-concat org-persist-directory (plist-get collection :persist-file)))
+              (data (mapcar (lambda (c) (cons c (org-persist-write:generic c collection)))
+                            (plist-get collection :container))))
+          (puthash file data org-persist--write-cache)
+          (org-persist--write-elisp-file file data)
+          (or ignore-return (org-persist-read container associated)))))))
 
 (defun org-persist-write-all (&optional associated)
   "Save all the persistent data.
 When ASSOCIATED is non-nil, only save the matching data."
   (unless org-persist--index (org-persist--load-index))
   (setq associated (org-persist--normalize-associated associated))
-  (let (all-containers)
-    (dolist (collection org-persist--index)
-      (if associated
-          (when collection
-            (cl-pushnew (plist-get collection :container) all-containers :test #'equal))
-        (condition-case err
-            (org-persist-write (plist-get collection :container) (plist-get collection :associated) t)
-          (error
-           (message "%s. Deleting bad index entry." err)
-           (org-persist--remove-from-index collection)
-           nil))))
-    (dolist (container all-containers)
-      (let ((collection (org-persist--find-index `(:container ,container :associated ,associated))))
-        (when collection
+  (if
+      (and (equal 1 (length org-persist--index))
+           ;; The single collection only contains a single container
+           ;; in the container list.
+           (equal 1 (length (plist-get (car org-persist--index) :container)))
+           ;; The container is an `index' container.
+           (eq 'index (caar (plist-get (car org-persist--index) :container)))
+           (or (not (file-exists-p org-persist-directory))
+               (org-directory-empty-p org-persist-directory)))
+      ;; Do not write anything, and clear up `org-persist-directory' to reduce
+      ;; clutter.
+      (when (and (file-exists-p org-persist-directory)
+                 (org-directory-empty-p org-persist-directory))
+        (delete-directory org-persist-directory))
+    ;; Write the data.
+    (let (all-containers)
+      (dolist (collection org-persist--index)
+        (if associated
+            (when collection
+              (cl-pushnew (plist-get collection :container) all-containers :test #'equal))
           (condition-case err
-              (org-persist-write container associated t)
+              (org-persist-write (plist-get collection :container) (plist-get collection :associated) t)
             (error
              (message "%s. Deleting bad index entry." err)
              (org-persist--remove-from-index collection)
-             nil)))))))
+             nil))))
+      (dolist (container all-containers)
+        (let ((collection (org-persist--find-index `(:container ,container :associated ,associated))))
+          (when collection
+            (condition-case err
+                (org-persist-write container associated t)
+              (error
+               (message "%s. Deleting bad index entry." err)
+               (org-persist--remove-from-index collection)
+               nil))))))))
 
 (defun org-persist-write-all-buffer ()
   "Call `org-persist-write-all' in current buffer.
@@ -951,6 +1102,7 @@ Do nothing in an indirect buffer."
 
 (defalias 'org-persist-gc:elisp #'ignore)
 (defalias 'org-persist-gc:index #'ignore)
+(defalias 'org-persist-gc:elisp-data #'ignore)
 (defalias 'org-persist-gc:version #'ignore)
 (defalias 'org-persist-gc:file #'ignore)
 (defalias 'org-persist-gc:url #'ignore)
@@ -973,6 +1125,7 @@ Do nothing in an indirect buffer."
 
 (defalias 'org-persist-associated-files:elisp #'ignore)
 (defalias 'org-persist-associated-files:index #'ignore)
+(defalias 'org-persist-associated-files:elisp-data #'ignore)
 (defalias 'org-persist-associated-files:version #'ignore)
 
 (defun org-persist-associated-files:file (container collection)
@@ -993,60 +1146,81 @@ Also, remove containers associated with non-existing files."
   (if org-persist--index
       (org-persist--merge-index-with-disk)
     (org-persist--load-index))
-  (unless (and org-persist-disable-when-emacs-Q
-               ;; FIXME: This is relying on undocumented fact that
-               ;; Emacs sets `user-init-file' to nil when loaded with
-               ;; "-Q" argument.
-               (not user-init-file))
-    (let (new-index
-          (remote-files-num 0)
-          (orphan-files
-           (delete (org-file-name-concat org-persist-directory org-persist-index-file)
-                   (directory-files-recursively org-persist-directory ".+"))))
-      (dolist (collection org-persist--index)
-        (let* ((file (plist-get (plist-get collection :associated) :file))
-               (web-file (and file (string-match-p "\\`https?://" file)))
-               (file-remote (when file (file-remote-p file)))
-               (persist-file (when (plist-get collection :persist-file)
-                               (org-file-name-concat
-                                org-persist-directory
-                                (plist-get collection :persist-file))))
-               (expired? (org-persist--gc-expired-p
-                          (plist-get collection :expiry) collection)))
-          (when persist-file
-            (setq orphan-files (delete persist-file orphan-files))
-            (when (and file (not web-file))
-              (when file-remote (cl-incf remote-files-num))
-              (unless (if (not file-remote)
-                          (file-exists-p file)
-                        (pcase org-persist-remote-files
-                          ('t t)
-                          ('check-existence
-                           (file-exists-p file))
-                          ((pred numberp)
-                           (< org-persist-remote-files remote-files-num))
-                          (_ nil)))
-                (setq expired? t)))
-            (if expired?
-                (org-persist--gc-persist-file persist-file)
-              (push collection new-index)
-              (dolist (container (plist-get collection :container))
-                (dolist (associated-file
-                         (org-persist-associated-files:generic
-                          container collection))
-                  (setq orphan-files (delete associated-file orphan-files))))))))
-      (mapc #'org-persist--gc-persist-file orphan-files)
-      (setq org-persist--index (nreverse new-index)))))
+  (let (new-index
+        (remote-files-num 0)
+        (orphan-files
+         (delete (org-file-name-concat org-persist-directory org-persist-index-file)
+                 (when (file-exists-p org-persist-directory)
+                   (directory-files-recursively org-persist-directory ".+")))))
+    (dolist (collection org-persist--index)
+      (let* ((file (plist-get (plist-get collection :associated) :file))
+             (web-file (and file (string-match-p "\\`https?://" file)))
+             (file-remote (when file (file-remote-p file)))
+             (persist-file (when (plist-get collection :persist-file)
+                             (org-file-name-concat
+                              org-persist-directory
+                              (plist-get collection :persist-file))))
+             (expired? (org-persist--gc-expired-p
+                        (plist-get collection :expiry) collection)))
+        (when persist-file
+          (setq orphan-files (delete persist-file orphan-files))
+          (when (and file (not web-file))
+            (when file-remote (cl-incf remote-files-num))
+            (unless (if (not file-remote)
+                        (file-exists-p file)
+                      (pcase org-persist-remote-files
+                        ('t t)
+                        ('check-existence
+                         (file-exists-p file))
+                        ((pred numberp)
+                         (< org-persist-remote-files remote-files-num))
+                        (_ nil)))
+              (setq expired? t)))
+          (if expired?
+              (org-persist--gc-persist-file persist-file)
+            (push collection new-index)
+            (dolist (container (plist-get collection :container))
+              (dolist (associated-file
+                       (org-persist-associated-files:generic
+                        container collection))
+                (setq orphan-files (delete associated-file orphan-files))))))))
+    (mapc #'org-persist--gc-persist-file orphan-files)
+    (setq org-persist--index (nreverse new-index))))
+
+(defun org-persist-clear-storage-maybe ()
+  "Clear `org-persist-directory' according to `org-persist--disable-when-emacs-Q'.
+
+When `org-persist--disable-when-emacs-Q' is non-nil and Emacs is called with -Q
+command line argument, `org-persist-directory' is created in potentially public
+system temporary directory.  Remove everything upon existing Emacs in
+such scenario."
+  (when (and org-persist--disable-when-emacs-Q
+             ;; FIXME: This is relying on undocumented fact that
+             ;; Emacs sets `user-init-file' to nil when loaded with
+             ;; "-Q" argument.
+             (not user-init-file)
+             (file-exists-p org-persist-directory))
+    (delete-directory org-persist-directory 'recursive)))
+
+;; Point to temp directory when `org-persist--disable-when-emacs-Q' is set.
+(when (and org-persist--disable-when-emacs-Q
+           ;; FIXME: This is relying on undocumented fact that
+           ;; Emacs sets `user-init-file' to nil when loaded with
+           ;; "-Q" argument.
+           (not user-init-file))
+  (setq org-persist-directory
+        (make-temp-file "org-persist-" 'dir)))
 
 ;; Automatically write the data, but only when we have write access.
 (let ((dir (directory-file-name
             (file-name-as-directory org-persist-directory))))
   (while (and (not (file-exists-p dir))
               (not (equal dir (setq dir (directory-file-name
-                                       (file-name-directory dir)))))))
+                                         (file-name-directory dir)))))))
   (if (not (file-writable-p dir))
       (message "Missing write access rights to org-persist-directory: %S"
                org-persist-directory)
+    (add-hook 'kill-emacs-hook #'org-persist-clear-storage-maybe) ; Run last.
     (add-hook 'kill-emacs-hook #'org-persist-write-all)
     ;; `org-persist-gc' should run before `org-persist-write-all'.
     ;; So we are adding the hook after `org-persist-write-all'.

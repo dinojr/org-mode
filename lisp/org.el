@@ -1,7 +1,7 @@
 ;;; org.el --- Outline-based notes management and organizer -*- lexical-binding: t; -*-
 
 ;; Carstens outline-mode for keeping track of everything.
-;; Copyright (C) 2004-2022 Free Software Foundation, Inc.
+;; Copyright (C) 2004-2023 Free Software Foundation, Inc.
 ;;
 ;; Author: Carsten Dominik <carsten.dominik@gmail.com>
 ;; Maintainer: Bastien Guerry <bzg@gnu.org>
@@ -206,7 +206,7 @@ Stars are put in group 1 and the trimmed body in group 2.")
 (declare-function org-latex-make-preamble "ox-latex" (info &optional template snippet?))
 (declare-function org-num-mode "org-num" (&optional arg))
 (declare-function org-plot/gnuplot "org-plot" (&optional params))
-(declare-function org-persist-load "org-persist" (container &optional associated hash-must-match))
+(declare-function org-persist-load "org-persist")
 (declare-function org-tags-view "org-agenda" (&optional todo-only match))
 (declare-function org-timer "org-timer" (&optional restart no-insert))
 (declare-function org-timer-item "org-timer" (&optional arg))
@@ -4839,7 +4839,7 @@ The following commands are available:
   (org-element-cache-reset)
   (when (and org-element-cache-persistent
              org-element-use-cache)
-    (org-persist-load 'org-element--cache (current-buffer) t))
+    (org-persist-load 'org-element--cache (current-buffer) 'match-hash :read-related t))
   ;; Initialize macros templates.
   (org-macro-initialize-templates)
   ;; Initialize radio targets.
@@ -4900,16 +4900,20 @@ The following commands are available:
 	     (= (point-min) (point-max)))
     (insert "#    -*- mode: org -*-\n\n"))
   (unless org-inhibit-startup
+    (when (or org-startup-align-all-tables org-startup-shrink-all-tables)
+      (org-table-map-tables
+       (cond ((and org-startup-align-all-tables
+		   org-startup-shrink-all-tables)
+	      (lambda () (org-table-align) (org-table-shrink)))
+	     (org-startup-align-all-tables #'org-table-align)
+	     (t #'org-table-shrink))
+       t))
+    ;; Suppress modification hooks to speed up the startup.
+    ;; However, do it only when text properties/overlays, but not
+    ;; buffer text are actually modified.  We still need to track text
+    ;; modifications to make cache updates work reliably.
     (org-unmodified
      (when org-startup-with-beamer-mode (org-beamer-mode))
-     (when (or org-startup-align-all-tables org-startup-shrink-all-tables)
-       (org-table-map-tables
-	(cond ((and org-startup-align-all-tables
-		    org-startup-shrink-all-tables)
-	       (lambda () (org-table-align) (org-table-shrink)))
-	      (org-startup-align-all-tables #'org-table-align)
-	      (t #'org-table-shrink))
-	t))
      (when org-startup-with-inline-images (org-display-inline-images))
      (when org-startup-with-latex-preview (org-latex-preview '(16)))
      (unless org-inhibit-startup-visibility-stuff (org-cycle-set-startup-visibility))
@@ -6686,7 +6690,9 @@ This goes first to child, then to parent, level, then up the hierarchy.
 After top level, it switches back to sibling level."
   (interactive)
   (let ((org-adapt-indentation nil))
-    (when (org-point-at-end-of-empty-headline)
+    (when (and (org-point-at-end-of-empty-headline)
+               (not (and (featurep 'org-inlinetask)
+                       (org-inlinetask-in-task-p))))
       (setq this-command 'org-cycle-level) ; Only needed for caching
       (let ((cur-level (org-current-level))
             (prev-level (org-get-previous-line-level)))
@@ -8860,7 +8866,7 @@ keywords relative to each registered export back-end."
     "EXCLUDE_TAGS:" "FILETAGS:" "INCLUDE:" "INDEX:" "KEYWORDS:" "LANGUAGE:"
     "MACRO:" "OPTIONS:" "PROPERTY:" "PRINT_BIBLIOGRAPHY" "PRIORITIES:"
     "SELECT_TAGS:" "SEQ_TODO:" "SETUPFILE:" "STARTUP:" "TAGS:" "TITLE:" "TODO:"
-    "TYP_TODO:" "SELECT_TAGS:" "EXCLUDE_TAGS:"))
+    "TYP_TODO:" "SELECT_TAGS:" "EXCLUDE_TAGS:" "EXPORT_FILE_NAME:"))
 
 (defcustom org-structure-template-alist
   '(("a" . "export ascii")
@@ -18551,24 +18557,40 @@ block from point."
   (interactive "sOrg-files matching: ")
   (let* ((files (org-agenda-files))
 	 (tnames (mapcar #'file-truename files))
-	 (extra org-agenda-text-search-extra-files))
-    (when (eq (car extra) 'agenda-archives)
+	 (extra org-agenda-text-search-extra-files)
+         (narrows nil))
+    (when (and (eq (car extra) 'agenda-archives)
+               (not org-agenda-restrict))
       (setq extra (cdr extra))
       (setq files (org-add-archive-files files)))
-    (dolist (f extra)
-      (unless (member (file-truename f) tnames)
-	(unless (member f files) (setq files (append files (list f))))
-	(setq tnames (append tnames (list (file-truename f))))))
+    (unless org-agenda-restrict
+      (dolist (f extra)
+        (unless (member (file-truename f) tnames)
+	  (unless (member f files) (setq files (append files (list f))))
+	  (setq tnames (append tnames (list (file-truename f)))))))
     (multi-occur
      (mapcar (lambda (x)
 	       (with-current-buffer
 		   ;; FIXME: Why not just (find-file-noselect x)?
 		   ;; Is it to avoid the "revert buffer" prompt?
 		   (or (get-file-buffer x) (find-file-noselect x))
-		 (widen)
+                 (if (eq (current-buffer) org-agenda-restrict)
+		     (progn
+                       ;; Save the narrowing state.
+                       (push (list (current-buffer) (point-min) (point-max))
+                             narrows)
+                       (widen)
+                       (narrow-to-region org-agenda-restrict-begin
+				         org-agenda-restrict-end))
+		   (widen))
 		 (current-buffer)))
 	     files)
-     regexp)))
+     regexp)
+    ;; Restore the narrowing.
+    (dolist (narrow narrows)
+      (with-current-buffer (car narrow)
+        (widen)
+        (narrow-to-region (nth 1 narrow) (nth 2 narrow))))))
 
 (add-hook 'occur-mode-find-occurrence-hook
 	  (lambda () (when (derived-mode-p 'org-mode) (org-fold-reveal))))
@@ -20179,7 +20201,10 @@ interactive command with similar behavior."
 (defun org-back-to-heading (&optional invisible-ok)
   "Go back to beginning of heading."
   (beginning-of-line)
-  (or (org-at-heading-p (not invisible-ok))
+  (or (and (org-at-heading-p (not invisible-ok))
+           (not (and (featurep 'org-inlinetask)
+                   (fboundp 'org-inlinetask-end-p)
+                   (org-inlinetask-end-p))))
       (if (org-element--cache-active-p)
           (let ((heading (org-element-lineage (org-element-at-point)
                                            '(headline inlinetask)
