@@ -3474,13 +3474,17 @@ This ensures the export commands can easily use it."
     (when (setq tmp (plist-get props 'date))
       (when (integerp tmp) (setq tmp (calendar-gregorian-from-absolute tmp)))
       (let ((calendar-date-display-form
-             '(year "-" (string-pad month 2 ?0 'left) "-" (string-pad day 2 ?0 'left))))
+             '((format "%s-%.2d-%.2d" year
+                       (string-to-number month)
+                       (string-to-number day)))))
 	(setq tmp (calendar-date-string tmp)))
       (setq props (plist-put props 'date tmp)))
     (when (setq tmp (plist-get props 'day))
       (when (integerp tmp) (setq tmp (calendar-gregorian-from-absolute tmp)))
       (let ((calendar-date-display-form
-             '(year "-" (string-pad month 2 ?0 'left) "-" (string-pad day 2 ?0 'left))))
+             '((format "%s-%.2d-%.2d" year
+                       (string-to-number month)
+                       (string-to-number day)))))
 	(setq tmp (calendar-date-string tmp)))
       (setq props (plist-put props 'day tmp))
       (setq props (plist-put props 'agenda-day tmp)))
@@ -7059,8 +7063,7 @@ scheduled items with an hour specification like [h]h:mm."
 (defun org-agenda-get-blocks ()
   "Return the date-range information for agenda display."
   (with-no-warnings (defvar date))
-  (let* ((props (list 'face nil
-		      'org-not-done-regexp org-not-done-regexp
+  (let* ((props (list 'org-not-done-regexp org-not-done-regexp
 		      'org-todo-regexp org-todo-regexp
 		      'org-complex-heading-regexp org-complex-heading-regexp
 		      'mouse-face 'highlight
@@ -7069,9 +7072,9 @@ scheduled items with an hour specification like [h]h:mm."
 			      (abbreviate-file-name buffer-file-name))))
 	 (regexp org-tr-regexp)
 	 (d0 (calendar-absolute-from-gregorian date))
-	 marker hdmarker ee txt d1 d2 s1 s2 category
-	 level todo-state tags pos head donep inherited-tags
-         effort effort-minutes)
+         face marker hdmarker ee txt d1 d2 s1 s2 category level
+	 todo-state tags pos head donep inherited-tags effort
+	 effort-minutes)
     (goto-char (point-min))
     (while (re-search-forward regexp nil t)
       (catch :skip
@@ -7109,6 +7112,9 @@ scheduled items with an hour specification like [h]h:mm."
 	      (setq donep (member todo-state org-done-keywords))
 	      (when (and donep org-agenda-skip-timestamp-if-done)
 		(throw :skip t))
+              (setq face (if (= d1 d2)
+                             'org-agenda-calendar-event
+                           'org-agenda-calendar-daterange))
 	      (setq marker (org-agenda-new-marker (point))
 		    category (org-get-category))
               (setq effort (save-match-data (or (get-text-property (point) 'effort)
@@ -7145,21 +7151,16 @@ scheduled items with an hour specification like [h]h:mm."
                                'effort effort
                                'effort-minutes effort-minutes)
                              level category tags
-			     (save-match-data
-			       (let ((hhmm1 (and (string-match org-ts-regexp1 s1)
-						 (match-string 6 s1)))
-				     (hhmm2 (and (string-match org-ts-regexp1 s2)
-						 (match-string 6 s2))))
-				 (cond ((string= hhmm1 hhmm2)
-					(concat "<" start-time ">--<" end-time ">"))
-				       ((and (= d1 d0) (= d2 d0))
-					(concat "<" start-time ">--<" end-time ">"))
-                                       ((= d1 d0)
-					(concat "<" start-time ">"))
-				       ((= d2 d0)
-					(concat "<" end-time ">")))))
+			     (cond
+                              ((and (= d1 d0) (= d2 d0))
+			       (concat "<" start-time ">--<" end-time ">"))
+                              ((= d1 d0)
+			       (concat "<" start-time ">"))
+			      ((= d2 d0)
+			       (concat "<" end-time ">")))
 			     remove-re))))
 	      (org-add-props txt props
+                'face face
 		'org-marker marker 'org-hd-marker hdmarker
 		'type "block" 'date date
 		'level level
