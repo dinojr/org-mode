@@ -548,7 +548,14 @@ Return modified element."
   "Set ELEMENT's contents to CONTENTS.
 Return ELEMENT."
   (cond ((null element) contents)
-	((not (symbolp (car element))) contents)
+	((not (symbolp (car element)))
+         (if (not (listp element))
+             ;; Non-element.
+             contents
+           ;; Anonymous element (el1 el2 ...)
+           (setcar element (car contents))
+           (setcdr element (cdr contents))
+           element))
 	((cdr element) (setcdr (cdr element) contents) element)
 	(t (nconc element contents))))
 
@@ -7567,15 +7574,15 @@ the cache."
                  ;; beginning.
                  (next-element-re (pcase granularity
                                     ((or `headline
-                                         (guard (eq '(headline)
-                                                    restrict-elements)))
+                                         (guard (equal '(headline)
+                                                       restrict-elements)))
                                      (cons
                                       (org-with-limited-levels
                                        org-element-headline-re)
                                       'match-beg))
                                     (`headline+inlinetask
                                      (cons
-                                      (if (eq '(inlinetask) restrict-elements)
+                                      (if (equal '(inlinetask) restrict-elements)
                                           (org-inlinetask-outline-regexp)
                                         org-element-headline-re)
                                       'match-beg))
