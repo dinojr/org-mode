@@ -168,7 +168,7 @@ This string must include a \"%s\" which will be replaced by the results."
      'safe-local-variable
      (lambda (value)
        (and (stringp value)
-	    (string-match-p "%s" value))))
+	    (string-search "%s" value))))
 
 (defcustom org-babel-hash-show-time nil
   "Non-nil means show the time the code block was evaluated in the result hash."
@@ -1984,7 +1984,7 @@ block of the same language with the previous."
 	 (stars (concat (make-string (or (org-current-level) 1) ?*) " "))
 	 (upper-case-p (and block
 			    (let (case-fold-search)
-			      (string-match-p "#\\+BEGIN_SRC" block)))))
+			      (string-search "#+BEGIN_SRC" block)))))
     (if (and info start) ;; At src block, but not within blank lines after it.
         (mapc
          (lambda (place)
@@ -3208,7 +3208,8 @@ Otherwise return nil."
 
 (defun org-babel-import-elisp-from-file (file-name &optional separator)
   "Read the results located at FILE-NAME into an elisp table.
-If the table is trivial, then return it as a scalar."
+If the table is trivial, then return it as a scalar.
+SEPARATOR is passed to `org-table-convert-region', which see."
   (let ((result
 	 (with-temp-buffer
 	   (condition-case err
@@ -3342,7 +3343,7 @@ constructed like the following: PREFIXDATAhashSUFFIX."
           "%s%s%s%s"
           (file-name-as-directory (org-babel-temp-stable-directory))
           prefix
-          (sxhash data)
+          (org-sxhash-safe data)
           (or suffix ""))))
     ;; Create file.
     (with-temp-file path)

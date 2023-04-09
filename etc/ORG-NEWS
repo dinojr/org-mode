@@ -13,6 +13,21 @@ Please send Org bug reports to mailto:emacs-orgmode@gnu.org.
 
 * Version 9.7 (not released yet)
 ** Important announcements and breaking changes
+*** "Priority" used to sort items in agenda is renamed to "urgency"
+
+Previously, ~priority-up~ and ~priority-down~ in
+~org-agenda-sorting-strategy~ used a composite rank depending on
+item's priority (=[#A]=, =[#B]=, =[#C]=, etc) and overdue time to
+order agenda items (see "11.4.3 Sorting of agenda items" section of
+Org manual).
+
+Now, this composite rank is renamed to =urgency= and the relevant
+sorting strategies are renamed to ~urgency-up~ and ~urgency-down~.
+~priority-up~ and ~priority-down~ sort by item's priority only.
+
+Users relying on the previous composite ranking should adjust their
+agenda sorting settings.
+
 *** =python-mode.el (MELPA)= support in =ob-python.el= is removed
 
 =python-mode.el= support has been removed from =ob-python.el=.  The
@@ -23,7 +38,34 @@ If you still want to use python-mode with ob-python, you might
 consider [[https://gitlab.com/jackkamm/ob-python-mode-mode][ob-python-mode-mode]], where the code to support python-mode
 has been ported to.
 
+*** =ox-icalendar.el= line ending fix may affect downstream packages
+
+iCalendar export now uses dos-style CRLF ("\r\n") line endings
+throughout, as required by the iCalendar specification (RFC 5545).
+Previously, the export used an inconsistent mix of dos and unix line
+endings.
+
+This might cause errors in external packages that parse output from
+ox-icalendar.  In particular, older versions of org-caldav may
+encounter issues, and users are advised to update to the most recent
+version of org-caldav.  See [[https://github.com/dengste/org-caldav/commit/618bf4cdc9be140ca1993901d017b7f18297f1b8][this org-caldav commit]] for more information.
+
 ** New and changed options
+*** ~org-src-block-faces~ now accepts empty string ~""~ as language name
+
+It is now possible to customize face of source blocks without language specifier.
+
+: #+begin_src
+: Source block with no language
+: #+end_src
+
+For example, to set ~highlight~ face, use
+
+#+begin_src emacs-lisp
+(setq org-src-fontify-natively t)
+(add-to-list 'org-src-block-faces '("" highlight))
+#+end_src
+
 *** New ~org-cite-natbib-export-bibliography~ option defining fallback bibliography style
 
 ~natbib~ citation export processor now uses
@@ -96,7 +138,29 @@ The face ~org-agenda-calendar-daterange~ is used to show entries with
 a date range in the agenda.  It inherits from the default face in
 order to remain backward-compatible.
 
+*** New ~org-babel-clojurescript-backend~ option to choose ClojureScript backend
+
+Before, a ClojureScript source block used the same backend as Clojure,
+configured in ~org-babel-clojure-backend~ and relied on an undocumented
+~:target~ paramter.
+
+Now, there's ~org-babel-clojurescript-backend~ to determine the
+backend used for evaluation of ClojureScript.
+
+*** Support for Clojure CLI in ~ob-clojure~
+
+~ob-clojure~ now supports executing babel source blocks with the
+official [[https://clojure.org/guides/deps_and_cli][Clojure CLI tools]].
+The command can be customized with ~ob-clojure-cli-command~.
+
 ** New features
+*** Add support for ~logind~ idle time in ~org-user-idle-seconds~
+
+When Emacs is built with =dbus= support and
+the =org.freedesktop.login1= interface is available, fallback to
+checking the =IdleSinceHint= property when
+determining =org-user-idle-seconds= as the penultimate step.
+
 *** ~org-metaup~ and ~org-metadown~ now act on headings in region
 
 When region is active and starts at a heading, ~org-metaup~ and
@@ -115,6 +179,20 @@ selection.
 
 TODO state, priority, tags, statistics cookies, and COMMENT keywords
 are allowed in the tree structure.
+
+*** Asynchronous code evaluatation in ~ob-shell~
+
+Running shell blocks with the ~:session~ header freezes Emacs until
+execution completes.  The new ~:async~ header allows users to continue
+editing with Emacs while a ~:session~ block executes.
+
+** Miscellaneous
+*** Remove undocumented ~:target~ header parameter in ~ob-clojure~
+
+The ~:target~ header was only used internally to distinguish
+from Clojure and ClojureScript.
+This is now handled with an optional function parameter in
+the respective functions that need this information.
 
 * Version 9.6
 
@@ -437,7 +515,7 @@ When the block type starts from the upper case, structure template
 will now insert =#+BEGIN_TYPE=.  Previously, lower-case =#+begin_type= was inserted unconditionally.
 *** New ox-latex tabbing support for tables.
 
-Latex tables can now be exported to the latex tabbing environment
+LaTeX tables can now be exported to the latex tabbing environment
 tabbing environment]].
 This is done by adding =#+ATTR_LATEX: :mode tabbing= at the top
 of the table.
@@ -836,8 +914,8 @@ following snippet to allow multiple different ID formats in Org files.
         ;; `org-attach-id-uuid-folder-format'.
         (lambda (id)
           (and (or (org-uuidgen-p id)
-	           (string-match-p "[0-9a-z]\\{12\\}" id))
-	       (org-attach-id-uuid-folder-format id)))
+                   (string-match-p "[0-9a-z]\\{12\\}" id))
+               (org-attach-id-uuid-folder-format id)))
         ;; When ID looks like a timestamp-based ID. Group by year-month
         ;; folders.
         (lambda (id)
@@ -1450,7 +1528,7 @@ Go through the buffer and ask for the replacement."
                      (goto-char (match-beginning 0))
                      (looking-at-p org-link-bracket-re))
                    (y-or-n-p "Fix link (remove TODO keyword)? "))
-	  (replace-match "[[*")))))
+          (replace-match "[[*")))))
   (visible-mode -1))
 #+end_src
 
@@ -2142,12 +2220,12 @@ removed.
       "Change properties for Org-Attach."
       (interactive)
       (org-with-point-at 1
-	(while (outline-next-heading)
-	  (let ((DIR (org--property-local-values "ATTACH_DIR" nil)))
-	    (when DIR
-	      (org-set-property "DIR" (car DIR))
-	      (org-delete-property "ATTACH_DIR"))))
-	(org-delete-property-globally "ATTACH_DIR_INHERIT")))
+        (while (outline-next-heading)
+          (let ((DIR (org--property-local-values "ATTACH_DIR" nil)))
+            (when DIR
+              (org-set-property "DIR" (car DIR))
+              (org-delete-property "ATTACH_DIR"))))
+        (org-delete-property-globally "ATTACH_DIR_INHERIT")))
 #+end_src
 
 For those who hate breaking changes, even though the changes are made
@@ -2672,14 +2750,14 @@ conditional on another entry. E.g. given this configuration:
   (defun custom/org-collect-confirmed (property)
     "Return `PROPERTY' for `CONFIRMED' entries"
     (let ((prop (org-entry-get nil property))
-	  (confirmed (org-entry-get nil "CONFIRMED")))
+          (confirmed (org-entry-get nil "CONFIRMED")))
       (if (and prop (string= "[X]" confirmed))
-	  prop
-	"0")))
+          prop
+        "0")))
 
   (setq org-columns-summary-types
-	'(("X+" org-columns--summary-sum
-	   custom/org-collect-confirmed)))
+        '(("X+" org-columns--summary-sum
+           custom/org-collect-confirmed)))
 #+END_SRC
 
 You can have a file =bananas.org= containing:
@@ -2914,11 +2992,11 @@ to the following
 #+BEGIN_SRC elisp
 (lambda (entry style project)
   (cond ((not (directory-name-p entry))
-	 (format "[[file:%s][%s]]"
-		 (file-name-sans-extension entry)
-		 (org-publish-find-title entry project)))
-	((eq style 'tree) (file-name-nondirectory (directory-file-name entry)))
-	(t entry)))
+         (format "[[file:%s][%s]]"
+                 (file-name-sans-extension entry)
+                 (org-publish-find-title entry project)))
+        ((eq style 'tree) (file-name-nondirectory (directory-file-name entry)))
+        (t entry)))
 #+END_SRC
 
 *** Change signature for ~:sitemap-function~
@@ -4388,7 +4466,7 @@ parameters specific to some pre-defined translators, e.g.,
 ~:environment~ and ~:booktabs~ for ~orgtbl-to-latex~.  See translators
 docstrings (including ~orgtbl-to-generic~) for details.
 
-*** Non-floating minted listings in Latex export
+*** Non-floating minted listings in LaTeX export
 
 It is not possible to specify =#+attr_latex: :float nil= in conjunction
 with source blocks exported by the minted package.
@@ -6644,7 +6722,7 @@ that Calc formulas can operate on them.
 
 *** Hyperlinks
 
-**** Org-Bibtex -- major improvements
+**** Org-BibTeX -- major improvements
 
      Provides support for managing bibtex bibliographical references
      data in headline properties.  Each headline corresponds to a

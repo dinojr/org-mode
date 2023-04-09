@@ -9419,16 +9419,16 @@ done depends on the type of view.
   time-of-day specification.  These entries are shown at the beginning
   of the list, as a /schedule/ for the day.  After that, items remain
   grouped in categories, in the sequence given by ~org-agenda-files~.
-  Within each category, items are sorted by priority (see
-  [[*Priorities]]), which is composed of the base priority (2000 for
-  priority =A=, 1000 for =B=, and 0 for =C=), plus additional
-  increments for overdue scheduled or deadline items.
+  Within each category, items are sorted by urgency, which is composed
+  of the base priority (see [[*Priorities]]; 2000 for priority =A=, 1000
+  for =B=, and 0 for =C=), plus additional increments for overdue
+  scheduled or deadline items.
 
 - For the TODO list, items remain in the order of categories, but
-  within each category, sorting takes place according to priority (see
-  [[*Priorities]]).  The priority used for sorting derives from the
-  priority cookie, with additions depending on how close an item is to
-  its due or scheduled date.
+  within each category, sorting takes place according to urgency.  The
+  urgency used for sorting derives from the priority cookie, with
+  additions depending on how close an item is to its due or scheduled
+  date.
 
 - For tags matches, items are not sorted at all, but just appear in
   the sequence in which they are found in the agenda files.
@@ -11005,6 +11005,10 @@ To turn off fontification for marked up text, you can set
 ~org-fontify-emphasized-text~ to ~nil~.  To narrow down the list of
 available markup syntax, you can customize ~org-emphasis-alist~.
 
+#+vindex: org-hide-emphasis-markers
+To hide the emphasis markup characters in your buffers, set
+~org-hide-emphasis-markers~ to ~t~.
+
 Sometimes, when marked text also contains the marker character itself,
 the result may be unsettling.  For example,
 
@@ -11152,14 +11156,14 @@ snippets are identified as LaTeX source code:
   =\begin= statement appears on a new line, preceded by only
   whitespace.
 
-- Text within the usual LaTeX math delimiters.  To avoid conflicts
-  with currency specifications, single =$= characters are only
-  recognized as math delimiters if the enclosed text contains at most
-  two line breaks, is directly attached to the =$= characters with no
-  whitespace in between, and if the closing =$= is followed by
-  whitespace, punctuation or a dash.  For the other delimiters, there
-  is no such restriction, so when in doubt, use =\(...\)= as inline
-  math delimiters.
+- Text within the usual LaTeX math delimiters.  Prefer =\(...\)= for
+  inline fragments.  The =$...$= alternative has some restrictions and
+  may be a source of confusion.  To avoid conflicts with currency
+  specifications, single =$= characters are only recognized as math
+  delimiters if the enclosed text contains at most two line breaks, is
+  directly attached to the =$= characters with no whitespace in
+  between, and if the closing =$= is followed by whitespace or
+  punctuation (but not a dash).
 
 #+texinfo: @noindent
 For example:
@@ -19923,15 +19927,18 @@ changes.
   #+cindex: @samp{SETUPFILE}, keyword
   The setup file or a URL pointing to such file is for additional
   in-buffer settings.  Org loads this file and parses it for any
-  settings in it only when Org opens the main file.  If URL is
+  settings in it when Org opens the main file.  If URL is
   specified, the contents are downloaded and stored in a temporary
-  file cache.  {{{kbd(C-c C-c)}}} on the settings line parses and
-  loads the file, and also resets the temporary file cache.  Org also
-  parses and loads the document during normal exporting process.  Org
-  parses the contents of this document as if it was included in the
-  buffer.  It can be another Org file.  To visit the file---not
-  a URL---use {{{kbd(C-c ')}}} while point is on the line with the
-  file name.
+  file cache.  {{{kbd(C-c C-c)}}} on the settings line re-parses and
+  re-loads the file, and also resets the temporary file cache.
+
+  Org also parses and loads /in-buffer settings/ from the setup file
+  during normal exporting process.  Org parses the /in-buffer
+  settings/ as if it was included in the containing Org buffer.  The
+  rest of the contents of setup file is ignored.
+
+  To visit the setup file---not a URL---use {{{kbd(C-c ')}}} while point
+  is on the line with the setup file name.
 
 - =#+STARTUP:= ::
 

@@ -233,7 +233,8 @@ Each element is a cell of the format
 
      (\"language\" FACE)
 
-Where FACE is either a defined face or an anonymous face.
+Where FACE is either a defined face or an anonymous face.  Empty
+language string refers to source blocks without specified language.
 
 For instance, the following would color the background of
 emacs-lisp source blocks and python source blocks in purple and
@@ -247,7 +248,6 @@ green, respectability.
                        (choice
                         (face :tag "Face")
                         (sexp :tag "Anonymous face"))))
-  :version "26.1"
   :package-version '(Org . "9.0"))
 
 (defcustom org-src-tab-acts-natively t
@@ -315,7 +315,7 @@ is 0.")
 
 (defun org-src--construct-edit-buffer-name (org-buffer-name lang)
   "Construct the buffer name for a source editing buffer.
-Format is \"*Org Src ORG-BUFFER-NAME [ LANG ]*\"."
+Format is \"*Org Src ORG-BUFFER-NAME[ LANG ]*\"."
   (concat "*Org Src " org-buffer-name "[ " lang " ]*"))
 
 (defun org-src--edit-buffer (beg end)

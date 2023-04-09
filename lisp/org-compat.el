@@ -71,6 +71,7 @@
 (declare-function outline-next-heading "outline" ())
 (declare-function speedbar-line-directory "speedbar" (&optional depth))
 (declare-function table--at-cell-p "table" (position &optional object at-column))
+(declare-function ob-clojure-eval-with-cmd "ob-clojure" (cmd expanded))
 (declare-function org-fold-folded-p "org-fold" (&optional pos spec-or-alias))
 (declare-function org-fold-hide-sublevels "org-fold" (levels))
 (declare-function org-fold-hide-subtree "org-fold" ())
@@ -386,6 +387,8 @@ Counting starts at 1."
 (define-obsolete-function-alias 'org-string-match-p 'string-match-p "9.0")
 
 ;;;; Functions and variables from previous releases now obsolete.
+(define-obsolete-function-alias 'org-habit-get-priority
+  'org-habit-get-urgency "Org 9.7")
 (define-obsolete-function-alias 'org-timestamp-format
   'org-format-timestamp "Org 9.6")
 (define-obsolete-variable-alias 'org-export-before-processing-hook
@@ -1126,6 +1129,9 @@ context.  See the individual commands for more information."
  'org-babel-python-mode
  "Only the built-in Python mode is supported in ob-python now."
  "9.7")
+
+(define-obsolete-function-alias 'ob-clojure-eval-with-babashka
+  #'ob-clojure-eval-with-cmd "9.7")
 
 ;;;; Obsolete link types
 

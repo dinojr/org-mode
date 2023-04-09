@@ -1103,7 +1103,7 @@ Assume point is at beginning of the headline."
                          (skip-chars-forward " \t")))
 	   (level (org-reduced-level true-level))
 	   (todo (and org-todo-regexp
-		      (let (case-fold-search) (looking-at (concat org-todo-regexp " ")))
+		      (let (case-fold-search) (looking-at (concat org-todo-regexp "\\(?: \\|$\\)")))
 		      (progn (goto-char (match-end 0))
 			     (skip-chars-forward " \t")
 			     (match-string 1))))
@@ -1114,16 +1114,13 @@ Assume point is at beginning of the headline."
 				 (aref (match-string 0) 2))))
 	   (commentedp
 	    (and (let ((case-fold-search nil))
-                   (looking-at org-element-comment-string))
-		 (goto-char (match-end 0))
-                 (when (looking-at-p "\\(?:[ \t]\\|$\\)")
-                   (point))))
-	   (title-start (prog1 (point)
-                          (unless (or todo priority commentedp)
-                            ;; Headline like "* :tag:"
-                            (skip-chars-backward " \t"))))
+                   (looking-at (concat org-element-comment-string "\\(?: \\|$\\)")))
+                 (prog1 t
+		   (goto-char (match-end 0))
+                   (skip-chars-forward " \t"))))
+	   (title-start (point))
 	   (tags (when (re-search-forward
-			"[ \t]+\\(:[[:alnum:]_@#%:]+:\\)[ \t]*$"
+			"\\(:[[:alnum:]_@#%:]+:\\)[ \t]*$"
 			(line-end-position)
 			'move)
 		   (goto-char (match-beginning 0))
@@ -2469,7 +2466,7 @@ CDR is a plist containing `:key', `:value', `:begin', `:end',
 	  (org-element-property :value keyword)))
 
 
-;;;; Latex Environment
+;;;; LaTeX Environment
 
 (defconst org-element--latex-begin-environment
   "^[ \t]*\\\\begin{\\([A-Za-z0-9*]+\\)}"
@@ -3419,7 +3416,7 @@ CONTENTS is the contents of the object."
   (format "/%s/" contents))
 
 
-;;;; Latex Fragment
+;;;; LaTeX Fragment
 
 (defun org-element-latex-fragment-parser ()
   "Parse LaTeX fragment at point, if any.

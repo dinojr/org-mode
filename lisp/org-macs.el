@@ -380,6 +380,11 @@ it for output."
     ;; Check for process failure.  Output file is expected to be
     ;; located in the same directory as SOURCE.
     (unless (org-file-newer-than-p output time)
+      (ignore (defvar org-batch-test))
+      ;; Display logs when running tests.
+      (when (bound-and-true-p org-batch-test)
+        (message "org-compile-file log ::\n-----\n%s\n-----\n"
+                 (with-current-buffer log-buf (buffer-string))))
       (error (format "File %S wasn't produced%s" output err-msg)))
     output))
 
@@ -824,6 +829,29 @@ When NEXT is non-nil, check the next line instead."
 When NEXT is non-nil, check the next line instead."
   (org--line-empty-p 2))
 
+(defun org-id-uuid ()
+  "Return string with random (version 4) UUID."
+  (let ((rnd (md5 (format "%s%s%s%s%s%s%s"
+			  (random)
+			  (org-time-convert-to-list nil)
+			  (user-uid)
+			  (emacs-pid)
+			  (user-full-name)
+			  user-mail-address
+			  (recent-keys)))))
+    (format "%s-%s-4%s-%s%s-%s"
+	    (substring rnd 0 8)
+	    (substring rnd 8 12)
+	    (substring rnd 13 16)
+	    (format "%x"
+		    (logior
+		     #b10000000
+		     (logand
+		      #b10111111
+		      (string-to-number
+		       (substring rnd 16 18) 16))))
+	    (substring rnd 18 20)
+	    (substring rnd 20 32))))
 
 
 ;;; Motion
@@ -942,6 +970,15 @@ return nil."
   "Non-nil if string S is a URL."
   (require 'ffap)
   (and ffap-url-regexp (string-match-p ffap-url-regexp s)))
+
+(defconst org-uuid-regexp
+  "\\`[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}\\'"
+  "Regular expression matching a universal unique identifier (UUID).")
+
+(defun org-uuidgen-p (s)
+  "Is S an ID created by UUIDGEN?"
+  (string-match org-uuid-regexp (downcase s)))
+
 
 
 ;;; String manipulation
@@ -1586,6 +1623,24 @@ BASE is the maximum bitcount.
 Credit: https://stackoverflow.com/questions/11871245/knuth-multiplicative-hash#41537995"
   (cl-assert (and (<= 0 base 32)))
   (ash (* number 2654435769) (- base 32)))
+
+(defvar org-sxhash-hashes (make-hash-table :weakness 'key :test 'equal))
+(defvar org-sxhash-objects (make-hash-table :weakness 'value))
+(defun org-sxhash-safe (obj &optional counter)
+  "Like `sxhash' for OBJ, but collision-free for in-memory objects.
+When COUNTER is non-nil, return safe hash for (COUNTER . OBJ)."
+  ;; Note: third-party code may modify OBJ by side effect.
+  ;; Should not affect anything as long as `org-sxhash-safe'
+  ;; is used to calculate hash.
+  (or (and (not counter) (gethash obj org-sxhash-hashes))
+      (let* ((hash (sxhash (if counter (cons counter obj) obj)))
+	     (obj-old (gethash hash org-sxhash-objects)))
+	(if obj-old ; collision
+	    (org-sxhash-safe obj (if counter (1+ counter) 1))
+	  ;; No collision.  Remember and return normal hash.
+	  (puthash hash obj org-sxhash-objects)
+	  (puthash obj hash org-sxhash-hashes)))))
+
 
 (provide 'org-macs)
 

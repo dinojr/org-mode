@@ -426,7 +426,7 @@ FORMAT and ARGS are passed to `message'."
          ;; Remove problematic file.
          (unless (bufferp buffer-or-file) (delete-file buffer-or-file))
          ;; Do not report the known error to user.
-         (if (string-match-p "Invalid read syntax" (error-message-string err))
+         (if (string-search "Invalid read syntax" (error-message-string err))
              (message "Emacs reader failed to read data in %S. The error was: %S"
                       buffer-or-file (error-message-string err))
            (warn "Emacs reader failed to read data in %S. The error was: %S"
@@ -675,13 +675,13 @@ COLLECTION is the plist holding data collection."
 
 (defun org-persist-read:file (_ path __)
   "Read file container from PATH."
-  (when (and path (file-exists-p (concat org-persist-directory path)))
-    (concat org-persist-directory path)))
+  (when (and path (file-exists-p (org-file-name-concat org-persist-directory path)))
+    (org-file-name-concat org-persist-directory path)))
 
 (defun org-persist-read:url (_ path __)
   "Read file container from PATH."
-  (when (and path (file-exists-p (concat org-persist-directory path)))
-    (concat org-persist-directory path)))
+  (when (and path (file-exists-p (org-file-name-concat org-persist-directory path)))
+    (org-file-name-concat org-persist-directory path)))
 
 (defun org-persist-read:index (cont index-file _)
   "Read index container CONT from INDEX-FILE."
