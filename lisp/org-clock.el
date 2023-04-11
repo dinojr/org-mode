@@ -1237,6 +1237,11 @@ If `only-dangling-p' is non-nil, only ask to resolve dangling
   "Return the current X11 idle time in seconds."
   (/ (string-to-number (shell-command-to-string org-clock-x11idle-program-name)) 1000))
 
+(defun org-pgtk-idle-seconds ()
+  "Return the current X11 idle time in seconds."
+  (/ (string-to-number (shell-command-to-string org-clock-pgtkidle-program-name))1000))
+
+
 (defvar org-logind-dbus-session-path
   (when (and (boundp 'dbus-runtime-version)
              (require 'dbus nil t)
@@ -1266,6 +1271,8 @@ This routine returns a floating point number."
     (org-mac-idle-seconds))
    ((and (eq window-system 'x) org-x11idle-exists-p)
     (org-x11-idle-seconds))
+   ((and (eq window-system 'pgtk) org-pgtkidle-exists-p)
+    (org-pgtk-idle-seconds))
    ((and
      org-logind-dbus-session-path
      (dbus-get-property
