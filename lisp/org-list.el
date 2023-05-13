@@ -2408,7 +2408,7 @@ subtree, ignoring planning line and any drawer following it."
 		  (setq lim-down (copy-marker limit))))
 	       ((org-at-heading-p)
 		;; On a heading, start at first item after drawers and
-		;; time-stamps (scheduled, etc.).
+		;; timestamps (scheduled, etc.).
 		(let ((limit (save-excursion (outline-next-heading) (point))))
 		  (org-end-of-meta-data t)
 		  (if (org-list-search-forward (org-item-beginning-re) limit t)
@@ -3334,7 +3334,7 @@ Valid parameters are:
 
 :backend, :raw
 
-  Export back-end used as a basis to transcode elements of the
+  Export backend used as a basis to transcode elements of the
   list, when no specific parameter applies to it.  It is also
   used to translate its contents.  You can prevent this by
   setting :raw property to a non-nil value.

@@ -46,7 +46,7 @@
 ;; - deprecated export block syntax,
 ;; - deprecated Babel header syntax,
 ;; - missing language in source blocks,
-;; - missing back-end in export blocks,
+;; - missing backend in export blocks,
 ;; - invalid Babel call blocks,
 ;; - NAME values with a colon,
 ;; - wrong babel headers,
@@ -509,7 +509,7 @@ Use :header-args: instead"
     (lambda (b)
       (unless (org-element-property :type b)
 	(list (org-element-property :post-affiliated b)
-	      "Missing back-end in export block")))))
+	      "Missing backend in export block")))))
 
 (defun org-lint-invalid-babel-call-block (ast)
   (org-element-map ast 'babel-call
@@ -1096,6 +1096,37 @@ Use \"export %s\" instead"
 				     (org-element-property :header datum))))))))
     reports))
 
+(defun org-lint-empty-header-argument (ast)
+  (let* (reports)
+    (org-element-map ast '(babel-call inline-babel-call inline-src-block src-block)
+      (lambda (datum)
+        (let ((headers
+	       (pcase (org-element-type datum)
+	         ((or `babel-call `inline-babel-call)
+		  (cl-mapcan
+                   (lambda (header) (org-babel-parse-header-arguments header 'no-eval))
+		   (list
+		    (org-element-property :inside-header datum)
+		    (org-element-property :end-header datum))))
+	         (`inline-src-block
+		  (org-babel-parse-header-arguments
+		   (org-element-property :parameters datum)
+                   'no-eval))
+	         (`src-block
+		  (cl-mapcan
+                   (lambda (header) (org-babel-parse-header-arguments header 'no-eval))
+		   (cons (org-element-property :parameters datum)
+			 (org-element-property :header datum)))))))
+          (dolist (header headers)
+            (when (not (cdr header))
+              (push
+	       (list
+                (or (org-element-property :post-affiliated datum)
+		    (org-element-property :begin datum))
+		(format "Empty value in header argument \"%s\"" (symbol-name (car header))))
+	       reports))))))
+    reports))
+
 (defun org-lint-wrong-header-value (ast)
   (let (reports)
     (org-element-map ast
@@ -1251,6 +1282,14 @@ Use \"export %s\" instead"
              (format "Bullet counter \"%s\" is not the same with item position %d.  Consider adding manual [@%d] counter."
                      bullet (car (last true-number)) bullet-number))))))))
 
+(defun org-lint-LaTeX-$ (ast)
+  "Report semi-obsolete $...$ LaTeX fragments."
+  (org-element-map ast 'latex-fragment
+    (lambda (fragment)
+      (and (string-match-p "^[$][^$]" (org-element-property :value fragment))
+           (list (org-element-property :begin fragment)
+                 "Potentially confusing LaTeX fragment format.  Prefer using more reliable \\(...\\)")))))
+
 
 ;;; Checkers declaration
 
@@ -1300,7 +1339,7 @@ Use \"export %s\" instead"
   :categories '(babel))
 
 (org-lint-add-checker 'missing-backend-in-export-block
-  "Report missing back-end in export blocks"
+  "Report missing backend in export blocks"
   #'org-lint-missing-backend-in-export-block
   :categories '(export))
 
@@ -1322,6 +1361,11 @@ Use \"export %s\" instead"
 (org-lint-add-checker 'wrong-header-value
   "Report invalid value in babel headers"
   #'org-lint-wrong-header-value
+  :categories '(babel) :trust 'low)
+
+(org-lint-add-checker 'empty-header-argument
+  "Report empty values in babel headers"
+  #'org-lint-empty-header-argument
   :categories '(babel) :trust 'low)
 
 (org-lint-add-checker 'deprecated-category-setup
@@ -1478,6 +1522,11 @@ Use \"export %s\" instead"
   "Report inconsistent item numbers in lists"
   #'org-lint-item-number
   :categories '(plain-list))
+
+(org-lint-add-checker 'LaTeX-$
+  "Report potentially confusing $...$ LaTeX markup."
+  #'org-lint-LaTeX-$
+  :categories '(markup))
 
 (provide 'org-lint)
 

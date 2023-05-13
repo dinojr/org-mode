@@ -1,4 +1,4 @@
-;;; ox-icalendar.el --- iCalendar Back-End for Org Export Engine -*- lexical-binding: t; -*-
+;;; ox-icalendar.el --- iCalendar Backend for Org Export Engine -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2004-2023 Free Software Foundation, Inc.
 
@@ -25,7 +25,7 @@
 
 ;;; Commentary:
 ;;
-;; This library implements an iCalendar back-end for Org generic
+;; This library implements an iCalendar backend for Org generic
 ;; exporter.  See Org manual for more information.
 ;;
 ;; It is expected to conform to RFC 5545.
@@ -48,7 +48,7 @@
 ;;; User-Configurable Variables
 
 (defgroup org-export-icalendar nil
-  "Options specific for iCalendar export back-end."
+  "Options specific for iCalendar export backend."
   :tag "Org Export iCalendar"
   :group 'org-export)
 
@@ -96,7 +96,7 @@ and will fire at the event start."
 (defcustom org-icalendar-exclude-tags nil
   "Tags that exclude a tree from export.
 This variable allows specifying different exclude tags from other
-back-ends.  It can also be set with the ICALENDAR_EXCLUDE_TAGS
+backends.  It can also be set with the ICALENDAR_EXCLUDE_TAGS
 keyword."
   :group 'org-export-icalendar
   :type '(repeat (string :tag "Tag")))
@@ -305,7 +305,7 @@ re-read the iCalendar file.")
 
 
 
-;;; Define Back-End
+;;; Define Backend
 
 (org-export-define-derived-backend 'icalendar 'ascii
   :translate-alist '((clock . nil)
@@ -561,10 +561,10 @@ runs `org-icalendar-after-save-hook'."
 
 ;;; Filters
 
-(defun org-icalendar-clear-blank-lines (headline _back-end _info)
+(defun org-icalendar-clear-blank-lines (headline _backend _info)
   "Remove blank lines in HEADLINE export.
 HEADLINE is a string representing a transcoded headline.
-BACK-END and INFO are ignored."
+BACKEND and INFO are ignored."
   (replace-regexp-in-string "^\\(?:[ \t]*\n\\)+" "" headline))
 
 
@@ -747,31 +747,30 @@ only.  CLASS contains the visibility attribute.  Three of them
 should be treated as \"PRIVATE\" if they are unknown to the iCalendar server.
 
 Return VEVENT component as a string."
-  (org-icalendar-fold-string
-   (if (eq (org-element-property :type timestamp) 'diary)
-       (org-icalendar-transcode-diary-sexp
-	(org-element-property :raw-value timestamp) uid summary)
-     (concat "BEGIN:VEVENT\n"
-	     (org-icalendar-dtstamp) "\n"
-	     "UID:" uid "\n"
-	     (org-icalendar-convert-timestamp timestamp "DTSTART" nil timezone) "\n"
-	     (org-icalendar-convert-timestamp timestamp "DTEND" t timezone) "\n"
-	     ;; RRULE.
-	     (when (org-element-property :repeater-type timestamp)
-	       (format "RRULE:FREQ=%s;INTERVAL=%d\n"
-		       (cl-case (org-element-property :repeater-unit timestamp)
-			 (hour "HOURLY") (day "DAILY") (week "WEEKLY")
-			 (month "MONTHLY") (year "YEARLY"))
-		       (org-element-property :repeater-value timestamp)))
-	     "SUMMARY:" summary "\n"
-	     (and (org-string-nw-p location) (format "LOCATION:%s\n" location))
-	     (and (org-string-nw-p class) (format "CLASS:%s\n" class))
-	     (and (org-string-nw-p description)
-		  (format "DESCRIPTION:%s\n" description))
-	     "CATEGORIES:" categories "\n"
-	     ;; VALARM.
-	     (org-icalendar--valarm entry timestamp summary)
-	     "END:VEVENT"))))
+  (if (eq (org-element-property :type timestamp) 'diary)
+      (org-icalendar-transcode-diary-sexp
+       (org-element-property :raw-value timestamp) uid summary)
+    (concat "BEGIN:VEVENT\n"
+	    (org-icalendar-dtstamp) "\n"
+	    "UID:" uid "\n"
+	    (org-icalendar-convert-timestamp timestamp "DTSTART" nil timezone) "\n"
+	    (org-icalendar-convert-timestamp timestamp "DTEND" t timezone) "\n"
+	    ;; RRULE.
+	    (when (org-element-property :repeater-type timestamp)
+	      (format "RRULE:FREQ=%s;INTERVAL=%d\n"
+		      (cl-case (org-element-property :repeater-unit timestamp)
+			(hour "HOURLY") (day "DAILY") (week "WEEKLY")
+			(month "MONTHLY") (year "YEARLY"))
+		      (org-element-property :repeater-value timestamp)))
+	    "SUMMARY:" summary "\n"
+	    (and (org-string-nw-p location) (format "LOCATION:%s\n" location))
+	    (and (org-string-nw-p class) (format "CLASS:%s\n" class))
+	    (and (org-string-nw-p description)
+		 (format "DESCRIPTION:%s\n" description))
+	    "CATEGORIES:" categories "\n"
+	    ;; VALARM.
+	    (org-icalendar--valarm entry timestamp summary)
+	    "END:VEVENT")))
 
 (defun org-icalendar--vtodo
     (entry uid summary location description categories timezone class)
@@ -797,34 +796,33 @@ Return VTODO component as a string."
 				 :day-start (nth 3 now)
 				 :month-start (nth 4 now)
 				 :year-start (nth 5 now)))))))
-    (org-icalendar-fold-string
-     (concat "BEGIN:VTODO\n"
-	     "UID:TODO-" uid "\n"
-	     (org-icalendar-dtstamp) "\n"
-	     (org-icalendar-convert-timestamp start "DTSTART" nil timezone) "\n"
-	     (and (memq 'todo-due org-icalendar-use-deadline)
-		  (org-element-property :deadline entry)
-		  (concat (org-icalendar-convert-timestamp
-			   (org-element-property :deadline entry) "DUE" nil timezone)
-			  "\n"))
-	     "SUMMARY:" summary "\n"
-	     (and (org-string-nw-p location) (format "LOCATION:%s\n" location))
-	     (and (org-string-nw-p class) (format "CLASS:%s\n" class))
-	     (and (org-string-nw-p description)
-		  (format "DESCRIPTION:%s\n" description))
-	     "CATEGORIES:" categories "\n"
-	     "SEQUENCE:1\n"
-	     (format "PRIORITY:%d\n"
-		     (let ((pri (or (org-element-property :priority entry)
-				    org-priority-default)))
-		       (floor (- 9 (* 8. (/ (float (- org-priority-lowest pri))
-					    (- org-priority-lowest
-					       org-priority-highest)))))))
-	     (format "STATUS:%s\n"
-		     (if (eq (org-element-property :todo-type entry) 'todo)
-			 "NEEDS-ACTION"
-		       "COMPLETED"))
-	     "END:VTODO"))))
+    (concat "BEGIN:VTODO\n"
+	    "UID:TODO-" uid "\n"
+	    (org-icalendar-dtstamp) "\n"
+	    (org-icalendar-convert-timestamp start "DTSTART" nil timezone) "\n"
+	    (and (memq 'todo-due org-icalendar-use-deadline)
+		 (org-element-property :deadline entry)
+		 (concat (org-icalendar-convert-timestamp
+			  (org-element-property :deadline entry) "DUE" nil timezone)
+			 "\n"))
+	    "SUMMARY:" summary "\n"
+	    (and (org-string-nw-p location) (format "LOCATION:%s\n" location))
+	    (and (org-string-nw-p class) (format "CLASS:%s\n" class))
+	    (and (org-string-nw-p description)
+		 (format "DESCRIPTION:%s\n" description))
+	    "CATEGORIES:" categories "\n"
+	    "SEQUENCE:1\n"
+	    (format "PRIORITY:%d\n"
+		    (let ((pri (or (org-element-property :priority entry)
+				   org-priority-default)))
+		      (floor (- 9 (* 8. (/ (float (- org-priority-lowest pri))
+					   (- org-priority-lowest
+					      org-priority-highest)))))))
+	    (format "STATUS:%s\n"
+		    (if (eq (org-element-property :todo-type entry) 'todo)
+			"NEEDS-ACTION"
+		      "COMPLETED"))
+	    "END:VTODO")))
 
 (defun org-icalendar--valarm (entry timestamp summary)
   "Create a VALARM component.
@@ -890,19 +888,20 @@ as a communication channel."
 NAME, OWNER, TZ, DESCRIPTION and CONTENTS are all strings giving,
 respectively, the name of the calendar, its owner, the timezone
 used, a short description and the other components included."
-  (concat (format "BEGIN:VCALENDAR
+  (org-icalendar-fold-string
+   (concat (format "BEGIN:VCALENDAR
 VERSION:2.0
 X-WR-CALNAME:%s
 PRODID:-//%s//Emacs with Org mode//EN
 X-WR-TIMEZONE:%s
 X-WR-CALDESC:%s
 CALSCALE:GREGORIAN\n"
-		  (org-icalendar-cleanup-string name)
-		  (org-icalendar-cleanup-string owner)
-		  (org-icalendar-cleanup-string tz)
-		  (org-icalendar-cleanup-string description))
-	  contents
-	  "END:VCALENDAR\n"))
+		   (org-icalendar-cleanup-string name)
+		   (org-icalendar-cleanup-string owner)
+		   (org-icalendar-cleanup-string tz)
+		   (org-icalendar-cleanup-string description))
+	   contents
+	   "END:VCALENDAR\n")))
 
 
 
@@ -937,7 +936,7 @@ Return ICS file name."
   (let ((file (buffer-file-name (buffer-base-buffer))))
     (when (and file org-icalendar-store-UID)
       (org-icalendar-create-uid file 'warn-user)))
-  ;; Export part.  Since this back-end is backed up by `ascii', ensure
+  ;; Export part.  Since this backend is backed up by `ascii', ensure
   ;; links will not be collected at the end of sections.
   (let ((outfile (org-export-output-file-name ".ics" subtreep)))
     (org-export-to-file 'icalendar outfile

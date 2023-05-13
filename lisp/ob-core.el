@@ -212,7 +212,7 @@ When matching, reference is stored in match group 1."
    ;; (4) header arguments
    "\\([^\n]*\\)\n"
    ;; (5) body
-   "\\([^\000]*?\n\\)??[ \t]*#\\+end_src")
+   "\\(\\(?:.\\|\n\\)*?\n\\)??[ \t]*#\\+end_src")
   "Regexp used to identify code blocks.")
 
 (defun org-babel--get-vars (params)
@@ -434,7 +434,46 @@ then run `org-babel-switch-to-session'."
     (tangle	. ((tangle yes no :any)))
     (tangle-mode . ((#o755 #o555 #o444 :any)))
     (var	. :any)
-    (wrap       . :any)))
+    (wrap       . :any))
+  "Alist defining common header args and their allowed values.
+
+Keys of the alist are header arg symbols.
+Values of the alist are either a symbol `:any' or a list of allowed
+values as symbols:
+
+   (header-name . :any)
+   (header-name . ((value1 value2 value3 ...))
+   (header-name . ((value1 value2 value3 ... :any))
+
+When Org considers header-arg property inheritance, the innermost
+value from the list is considered.
+
+Symbol `:any' in the value list implies that any value is allowed.
+Yet the explicitly listed values from the list will be offered as
+completion candidates.
+
+FIXME: This is currently just supported for `results' and `exports'.
+Values in the alist can also be a list of lists.  The inner lists
+define exclusive groups of values that can be set at the same time for
+a given header argument.
+
+  (results . ((file list ...)
+             (raw html ...))
+
+The above example allows multi-component header arguments like
+
+   #+begin_src bash :results file raw
+   <:results will combine the two values \"file raw\".>
+
+   #+begin_src bash :results file list
+   <:results will only use the last value \"list\".>
+
+   #+property: header-args :results file html
+   ...
+   #+begin_src bash :results list
+   <:results will inherit with partial override \"list html\".>
+
+See info node `(org)Results of evaluation' for more details.")
 
 (defconst org-babel-header-arg-names
   (mapcar #'car org-babel-common-header-args-w-values)
@@ -1662,9 +1701,11 @@ shown below.
   (let (results)
     (mapc (lambda (pair)
 	    (if (eq (car pair) :var)
-		(mapcar (lambda (v) (push (cons :var (org-trim v)) results))
-			(org-babel-join-splits-near-ch
-			 61 (org-babel-balanced-split (cdr pair) 32)))
+                (or
+	         (mapcar (lambda (v) (push (cons :var (org-trim v)) results))
+		         (org-babel-join-splits-near-ch
+		          61 (org-babel-balanced-split (or (cdr pair) "") 32)))
+                 (push `(:var) results))
 	      (push pair results)))
 	  header-arguments)
     (nreverse results)))
@@ -2425,7 +2466,8 @@ INFO may provide the values of these header arguments (in the
 		  (delete-region (point) (org-babel-result-end)))
 		 ((member "append" result-params)
 		  (goto-char (org-babel-result-end)) (setq beg (point-marker)))
-		 ((member "prepend" result-params))) ; already there
+		 ;; ((member "prepend" result-params)) ; already there
+                 )
 		(setq results-switches
 		      (if results-switches (concat " " results-switches) ""))
 		(let ((wrap

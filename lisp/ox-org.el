@@ -1,4 +1,4 @@
-;;; ox-org.el --- Org Back-End for Org Export Engine -*- lexical-binding: t; -*-
+;;; ox-org.el --- Org Backend for Org Export Engine -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2013-2023 Free Software Foundation, Inc.
 
@@ -337,7 +337,7 @@ Return output file name."
 	(when org-org-htmlized-css-url
 	  (goto-char (point-min))
 	  (and (re-search-forward
-		"<style type=\"text/css\">[^\000]*?\n[ \t]*</style>.*" nil t)
+		"<style type=\"text/css\">\\(?:.\\|\n\\)*?\n[ \t]*</style>.*" nil t)
 	       (replace-match
 		(format
 		 "<link rel=\"stylesheet\" type=\"text/css\" href=\"%s\">"
@@ -345,9 +345,7 @@ Return output file name."
                 t t)))
 	(write-file (concat pub-dir (file-name-nondirectory filename) html-ext)))
       (kill-buffer newbuf)
-      (unless visitingp (kill-buffer work-buffer)))
-    ;; FIXME: Why?  Which buffer is this supposed to apply to?
-    (set-buffer-modified-p nil)))
+      (unless visitingp (kill-buffer work-buffer)))))
 
 
 (provide 'ox-org)

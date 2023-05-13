@@ -128,7 +128,7 @@ clocking out."
   "Rounding minutes when clocking in or out.
 The default value is 0 so that no rounding is done.
 When set to a non-integer value, use the car of
-`org-time-stamp-rounding-minutes', like for setting a time-stamp.
+`org-timestamp-rounding-minutes', like for setting a timestamp.
 
 E.g. if `org-clock-rounding-minutes' is set to 5, time is 14:47
 and you clock in: then the clock starts at 14:45.  If you clock
@@ -1468,8 +1468,8 @@ the default behavior."
 			  leftover)
 		     start-time
 		     (org-current-time org-clock-rounding-minutes t)))
-	   (setq ts (org-insert-time-stamp org-clock-start-time
-					   'with-hm 'inactive))
+	   (setq ts (org-insert-timestamp org-clock-start-time
+					  'with-hm 'inactive))
 	   (org-indent-line)))
 	 (move-marker org-clock-marker (point) (buffer-base-buffer))
 	 (move-marker org-clock-hd-marker
@@ -1749,7 +1749,7 @@ to, overriding the existing value of `org-clock-out-switch-to-state'."
 	  (delete-region (point) (line-end-position))
           (org-fold-core-ignore-modifications
             (insert-and-inherit "--")
-            (setq te (org-insert-time-stamp (or at-time now) 'with-hm 'inactive))
+            (setq te (org-insert-timestamp (or at-time now) 'with-hm 'inactive))
             (setq s (org-time-convert-to-integer
 	             (time-subtract
 	              (org-time-string-to-time te)
@@ -2416,7 +2416,7 @@ have priority."
                               d (+ d shift)))
       ((or `week `thisweek)
        (let* ((ws (or wstart 1))
-	      (diff (+ (* -7 shift) (if (= dow 0) (- 7 ws) (- dow ws)))))
+	      (diff (+ (* -7 shift) (mod (+ dow 7 (- ws)) 7))))
 	 (setq m 0 h org-extend-today-until d (- d diff) d1 (+ 7 d))))
       ((or `month `thismonth)
        (setq h org-extend-today-until m 0 d (or mstart 1)
@@ -3135,57 +3135,58 @@ PROPERTIES: The list properties specified in the `:properties' parameter
 Otherwise, return nil."
   (interactive)
   (let ((origin (point))) ;; `save-excursion' may not work when deleting.
-    (save-excursion
-      (beginning-of-line 1)
-      (skip-chars-forward " \t")
-      (when (looking-at org-clock-string)
-        (let ((re (concat "[ \t]*" org-clock-string
-		          " *[[<]\\([^]>]+\\)[]>]\\(-+[[<]\\([^]>]+\\)[]>]"
-		          "\\([ \t]*=>.*\\)?\\)?"))
-	      ts te h m s neg)
-          (cond
-	   ((not (looking-at re))
-	    nil)
-	   ((not (match-end 2))
-	    (when (and (equal (marker-buffer org-clock-marker) (current-buffer))
-		       (> org-clock-marker (point))
-                       (<= org-clock-marker (line-end-position)))
-	      ;; The clock is running here
-	      (setq org-clock-start-time
-		    (org-time-string-to-time (match-string 1)))
-	      (org-clock-update-mode-line)))
-	   (t
-            ;; Prevent recursive call from `org-timestamp-change'.
-            (cl-letf (((symbol-function 'org-clock-update-time-maybe) #'ignore))
-              ;; Update timestamps.
-              (save-excursion
-                (goto-char (match-beginning 1)) ; opening timestamp
-                (save-match-data (org-timestamp-change 0 'day)))
-              ;; Refresh match data.
-              (looking-at re)
-              (save-excursion
-                (goto-char (match-beginning 3)) ; closing timestamp
-                (save-match-data (org-timestamp-change 0 'day))))
-            ;; Refresh match data.
-            (looking-at re)
-            (and (match-end 4) (delete-region (match-beginning 4) (match-end 4)))
-            (end-of-line 1)
-            (setq ts (match-string 1)
-                  te (match-string 3))
-            (setq s (- (org-time-string-to-seconds te)
-		       (org-time-string-to-seconds ts))
-                  neg (< s 0)
-                  s (abs s)
-                  h (floor (/ s 3600))
-                  s (- s (* 3600 h))
-                  m (floor (/ s 60))
-                  s (- s (* 60 s)))
-	    (insert " => " (format (if neg "-%d:%02d" "%2d:%02d") h m))
-	    t)))))
-    ;; Move back to initial position, but never beyond updated
-    ;; clock.
-    (unless (< (point) origin)
-      (goto-char origin))))
+    (prog1
+        (save-excursion
+          (beginning-of-line 1)
+          (skip-chars-forward " \t")
+          (when (looking-at org-clock-string)
+            (let ((re (concat "[ \t]*" org-clock-string
+		              " *[[<]\\([^]>]+\\)[]>]\\(-+[[<]\\([^]>]+\\)[]>]"
+		              "\\([ \t]*=>.*\\)?\\)?"))
+	          ts te h m s neg)
+              (cond
+	       ((not (looking-at re))
+	        nil)
+	       ((not (match-end 2))
+	        (when (and (equal (marker-buffer org-clock-marker) (current-buffer))
+		           (> org-clock-marker (point))
+                           (<= org-clock-marker (line-end-position)))
+	          ;; The clock is running here
+	          (setq org-clock-start-time
+		        (org-time-string-to-time (match-string 1)))
+	          (org-clock-update-mode-line)))
+	       (t
+                ;; Prevent recursive call from `org-timestamp-change'.
+                (cl-letf (((symbol-function 'org-clock-update-time-maybe) #'ignore))
+                  ;; Update timestamps.
+                  (save-excursion
+                    (goto-char (match-beginning 1)) ; opening timestamp
+                    (save-match-data (org-timestamp-change 0 'day)))
+                  ;; Refresh match data.
+                  (looking-at re)
+                  (save-excursion
+                    (goto-char (match-beginning 3)) ; closing timestamp
+                    (save-match-data (org-timestamp-change 0 'day))))
+                ;; Refresh match data.
+                (looking-at re)
+                (and (match-end 4) (delete-region (match-beginning 4) (match-end 4)))
+                (end-of-line 1)
+                (setq ts (match-string 1)
+                      te (match-string 3))
+                (setq s (- (org-time-string-to-seconds te)
+		           (org-time-string-to-seconds ts))
+                      neg (< s 0)
+                      s (abs s)
+                      h (floor (/ s 3600))
+                      s (- s (* 3600 h))
+                      m (floor (/ s 60))
+                      s (- s (* 60 s)))
+	        (insert " => " (format (if neg "-%d:%02d" "%2d:%02d") h m))
+	        t)))))
+      ;; Move back to initial position, but never beyond updated
+      ;; clock.
+      (unless (< (point) origin)
+        (goto-char origin)))))
 
 (defun org-clock-save ()
   "Persist various clock-related data to disk.

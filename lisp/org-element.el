@@ -3242,13 +3242,13 @@ Assume point is at the beginning of the snippet."
 					    (re-search-forward "@@" nil t)
 					  (match-beginning 0)))))
 	(let* ((begin (match-beginning 0))
-	       (back-end (match-string-no-properties 1))
+	       (backend (match-string-no-properties 1))
 	       (value (buffer-substring-no-properties
 		       (match-end 0) contents-end))
 	       (post-blank (skip-chars-forward " \t"))
 	       (end (point)))
 	  (list 'export-snippet
-		(list :back-end back-end
+		(list :back-end backend
 		      :value value
 		      :begin begin
 		      :end end
@@ -3671,7 +3671,7 @@ a plist with `:key', `:args', `:begin', `:end', `:value' and
 
 Assume point is at the macro."
   (save-excursion
-    (when (looking-at "{{{\\([a-zA-Z][-a-zA-Z0-9_]*\\)\\((\\([^\000]*?\\))\\)?}}}")
+    (when (looking-at "{{{\\([a-zA-Z][-a-zA-Z0-9_]*\\)\\((\\(\\(?:.\\|\n\\)*?\\))\\)?}}}")
       (let ((begin (point))
 	    (key (downcase (match-string-no-properties 1)))
 	    (value (match-string-no-properties 0))
@@ -3995,7 +3995,7 @@ Assume point is at the beginning of the timestamp."
 		  day-start (nth 3 date)
 		  hour-start (nth 2 date)
 		  minute-start (nth 1 date))))
-	;; Compute date-end.  It can be provided directly in time-stamp,
+	;; Compute date-end.  It can be provided directly in timestamp,
 	;; or extracted from time range.  Otherwise, it defaults to the
 	;; same values as date-start.
 	(unless diaryp
@@ -5333,7 +5333,7 @@ seconds.")
   "Duration, as a time value, of the pause between synchronizations.
 See `org-element-cache-sync-duration' for more information.")
 
-(defvar org-element--cache-self-verify t
+(defvar org-element--cache-self-verify nil
   "Activate extra consistency checks for the cache.
 
 This may cause serious performance degradation depending on the value
@@ -5400,14 +5400,6 @@ Also, see `org-element--cache-hash-size'.")
 When non-nil, it should be a vector representing POS arguments of
 `org-element--cache-find' called with non-nil, non-`both' SIDE argument.
 Also, see `org-element--cache-hash-size'.")
-
-(defvar org-element--cache-hash-statistics '(0 . 0)
-  "Cons cell storing how Org makes use of `org-element--cache-find' caching.
-The car is the number of successful uses and cdr is the total calls to
-`org-element--cache-find'.")
-(defvar org-element--cache-hash-nocache 0
-  "Number of calls to `org-element--cache-has' with `both' SIDE argument.
-These calls are not cached by hash.  See `org-element--cache-hash-size'.")
 
 (defvar-local org-element--cache-size 0
   "Size of the `org-element--cache'.
@@ -5742,25 +5734,6 @@ This function assumes `org-element--headline-cache' is a valid AVL tree."
                     (throw :inhibited nil)))
                 t))))))
 
-;; FIXME: Remove after we establish that hashing is effective.
-(defun org-element-cache-hash-show-statistics ()
-  "Display efficiency of O(1) query cache for `org-element--cache-find'.
-
-This extra caching is based on the following paper:
-Pugh [Information Processing Letters] (1990) Slow optimally balanced
- search strategies vs. cached fast uniformly balanced search
- strategies.  http://dx.doi.org/10.1016/0020-0190(90)90130-P
-
-Also, see `org-element--cache-size'."
-  (interactive)
-  (message "%.2f%% of cache searches hashed, %.2f%% non-hashable."
-	   (* 100
-	      (/ (float (car org-element--cache-hash-statistics))
-		 (cdr org-element--cache-hash-statistics)))
-	   (* 100
-	      (/ (float org-element--cache-hash-nocache)
-		 (cdr org-element--cache-hash-statistics)))))
-
 (defun org-element--cache-find (pos &optional side)
   "Find element in cache starting at POS or before.
 
@@ -5788,23 +5761,26 @@ the cache."
 	   lower upper)
       ;; `org-element--cache-key-less-p' does not accept markers.
       (when (markerp pos) (setq pos (marker-position pos)))
-      (cl-incf (cdr org-element--cache-hash-statistics))
-      (when (eq side 'both) (cl-incf org-element--cache-hash-nocache))
       (if (and hashed (not (eq side 'both))
+               ;; Ensure that HASHED is not within synchronized part
+               ;; of the cache.
+               (org-element-property :cached hashed)
                (or (not limit)
                    ;; Limit can be a list key.
                    (org-element--cache-key-less-p
                     (org-element--cache-key hashed)
                     limit))
+               ;; It is only safe to assume that element at POS is
+               ;; exact.  Extra elements starting before/after could
+               ;; have been added to cache and HASHED may no longer be
+               ;; valid.
                (= pos (org-element-property :begin hashed))
                ;; We cannot rely on element :begin for elements with
                ;; children starting at the same pos.
                (not (memq (org-element-type hashed)
-                        '(section org-data table)))
-               (org-element-property :cached hashed))
-          (progn
-            (cl-incf (car org-element--cache-hash-statistics))
-            hashed)
+                        '(section org-data table))))
+          hashed
+        ;; No appriate HASHED.  Search the cache.
         (while node
           (let* ((element (avl-tree--node-data node))
 	         (begin (org-element-property :begin element)))
@@ -5845,14 +5821,12 @@ the cache."
 	      (setq node nil
 		    lower element
 		    upper element)))))
-        (if (not side)
-            (aset org-element--cache-hash-left hash-pos lower)
-          (unless (eq side 'both)
-            (aset org-element--cache-hash-right hash-pos lower)))
         (pcase side
           (`both (cons lower upper))
-          (`nil lower)
-          (_ upper))))))
+          (`nil
+           (aset org-element--cache-hash-left hash-pos lower))
+          (_
+           (aset org-element--cache-hash-right hash-pos upper)))))))
 
 (defun org-element--cache-put (element)
   "Store ELEMENT in current buffer's cache, if allowed."
@@ -7732,43 +7706,43 @@ the cache."
                                        (eq (next-element-start)
                                            start))
                               (setq start nil))
-                            ;; Check if the buffer has been modified.
-                            (unless (org-with-base-buffer nil
-                                      (and (eq modified-tic org-element--cache-change-tic)
-                                           (eq cache-size (cache-size))))
-                              ;; START may no longer be valid, update
-                              ;; it to beginning of real element.
-                              ;; Upon modification, START may lay
-                              ;; inside an element.  We want to move
-                              ;; it to real beginning then despite
-                              ;; START being larger.
-                              (setq start nil)
-                              (move-start-to-next-match nil)
-                              ;; The new element may now start before
-                              ;; or at already processed position.
-                              ;; Make sure that we continue from an
-                              ;; element past already processed
-                              ;; place.
-                              (when (and start
-                                         (<= start (org-element-property :begin data))
-                                         (not org-element-cache-map-continue-from))
-                                (goto-char start)
-                                (setq data (element-match-at-point))
-                                ;; If DATA is nil, buffer is
-                                ;; empty. Abort.
-                                (when data
-                                  (goto-char (next-element-start))
-                                  (move-start-to-next-match next-element-re)))
-                              (org-element-at-point to-pos)
-                              (cache-walk-restart))
                             ;; Reached LIMIT-COUNT.  Abort.
                             (when (and limit-count
                                        (>= count-predicate-calls-match
-                                           limit-count))
-                              (cache-walk-abort))
-                            (if (org-element-property :cached data)
-		                (setq prev data)
-                              (setq prev nil))))
+                                          limit-count))
+                              (cache-walk-abort)))
+                          ;; Check if the buffer or cache has been modified.
+                          (unless (org-with-base-buffer nil
+                                    (and (eq modified-tic org-element--cache-change-tic)
+                                         (eq cache-size (cache-size))))
+                            ;; START may no longer be valid, update
+                            ;; it to beginning of real element.
+                            ;; Upon modification, START may lay
+                            ;; inside an element.  We want to move
+                            ;; it to real beginning then despite
+                            ;; START being larger.
+                            (setq start nil)
+                            (move-start-to-next-match nil)
+                            ;; The new element may now start before
+                            ;; or at already processed position.
+                            ;; Make sure that we continue from an
+                            ;; element past already processed
+                            ;; place.
+                            (when (and start
+                                       (<= start (org-element-property :begin data))
+                                       (not org-element-cache-map-continue-from))
+                              (goto-char start)
+                              (setq data (element-match-at-point))
+                              ;; If DATA is nil, buffer is
+                              ;; empty. Abort.
+                              (when data
+                                (goto-char (next-element-start))
+                                (move-start-to-next-match next-element-re)))
+                            (org-element-at-point to-pos)
+                            (cache-walk-restart))
+                          (if (org-element-property :cached data)
+		              (setq prev data)
+                            (setq prev nil)))
                       ;; DATA is after START.  Fill the gap.
                       (if (memq (org-element-type (org-element--parse-to start)) '(plain-list table))
                           ;; Tables and lists are special, we need a
