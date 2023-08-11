@@ -85,20 +85,21 @@
   (cl-assert (not org-agenda-sticky) nil "precondition violation")
   (cl-assert (not (org-test-agenda--agenda-buffers))
 	     nil "precondition violation")
-  (let ((org-agenda-span 'day)
-	(org-agenda-files `(,(expand-file-name "examples/agenda-file.org"
-					       org-test-dir))))
-    ;; NOTE: Be aware that `org-agenda-list' may or may not display
-    ;; past scheduled items depending whether the date is today
-    ;; `org-today' or not.
-    (org-agenda-list nil "<2017-07-19 Wed>")
-    (set-buffer org-agenda-buffer-name)
-    (should
-     (progn (goto-line 3)
-	    (looking-at " *agenda-file:Scheduled: *test agenda"))))
-  (org-test-agenda--kill-all-agendas))
+  (dolist (org-element-use-cache '(t nil))
+    (let ((org-agenda-span 'day)
+	  (org-agenda-files `(,(expand-file-name "examples/agenda-file.org"
+					         org-test-dir))))
+      ;; NOTE: Be aware that `org-agenda-list' may or may not display
+      ;; past scheduled items depending whether the date is today
+      ;; `org-today' or not.
+      (org-agenda-list nil "<2017-07-19 Wed>")
+      (set-buffer org-agenda-buffer-name)
+      (should
+       (progn (goto-line 3)
+	      (looking-at " *agenda-file:Scheduled: *test agenda"))))
+    (org-test-agenda--kill-all-agendas)))
 
-(ert-deftest test-org-agenda/non-scheduled-re-matces ()
+(ert-deftest test-org-agenda/non-scheduled-re-matches ()
   "Make sure that scheduled-looking elements do not appear in agenda.
 See https://list.orgmode.org/20220101200103.GB29829@itccanarias.org/T/#t."
   (cl-assert (not org-agenda-sticky) nil "precondition violation")
@@ -267,6 +268,136 @@ See https://list.orgmode.org/06d301d83d9e$f8b44340$ea1cc9c0$@tomdavey.com"
       (goto-char (point-min))
       (should (not (invisible-p (1- (search-forward "TODO Foo")))))))
   (org-toggle-sticky-agenda))
+
+(ert-deftest test-org-agenda/skip-if ()
+  "Test `org-agenda-skip-if'."
+  (dolist (options '((scheduled) (notscheduled)
+                     (deadline) (notdeadline)
+                     (timestamp) (nottimestamp)
+                     (regexp "hello") (notregexp "hello")
+                     ;; TODO: Test for specific TODO keywords
+                     (todo ("*")) (nottodo ("*"))))
+    (should
+     (equal
+      (if (memq (car options) '(notscheduled notdeadline nottimestamp regexp nottodo))
+          8
+        nil)
+      (org-test-with-temp-text
+          "* hello"
+        (org-agenda-skip-if nil options))))
+    (should
+     (equal
+      (if (memq (car options) '(scheduled notdeadline timestamp regexp nottodo))
+          36
+        nil)
+      (org-test-with-temp-text
+          "* hello
+SCHEDULED: <2023-07-15 Sat>"
+        (org-agenda-skip-if nil options))))
+    (should
+     (equal
+      (if (memq (car options) '(notscheduled deadline timestamp regexp nottodo))
+          35
+        nil)
+      (org-test-with-temp-text
+          "* hello
+DEADLINE: <2023-07-15 Sat>"
+        (org-agenda-skip-if nil options))))
+    (should
+     (equal
+      (if (memq (car options) '(notscheduled notdeadline timestamp regexp nottodo))
+          25
+        nil)
+      (org-test-with-temp-text
+          "* hello
+<2023-07-15 Sat>"
+        (org-agenda-skip-if nil options))))
+    (should
+     (equal
+      (if (memq (car options) '(notscheduled notdeadline nottimestamp notregexp nottodo))
+          10
+        nil)
+      (org-test-with-temp-text
+          "* goodbye"
+        (org-agenda-skip-if nil options))))
+    (should
+     (equal
+      (if (memq (car options) '(notscheduled notdeadline nottimestamp notregexp todo))
+          26
+        nil)
+      (org-test-with-temp-text
+          "* TODO write better tests"
+        (org-agenda-skip-if nil options))))))
+
+(ert-deftest test-org-agenda/timestamp-ignore-todo-item ()
+  "Test if `org-agenda' ignores a todo item with a timestamp.
+
+Based on the following variables:
+`org-agenda-todo-ignore-deadlines',
+`org-agenda-todo-ignore-scheduled', and
+`org-agenda-todo-ignore-timestamp'."
+  ;; TODO: test `org-agenda-todo-ignore-with-date'.
+  ;; Maybe test having multiple variables set.
+  (let ((org-agenda-custom-commands
+         '(("f" "no fluff" todo ""
+            ((org-agenda-todo-keyword-format "")
+             (org-agenda-overriding-header "")
+             (org-agenda-prefix-format "")))))
+        (org-deadline-warning-days 1)
+        (expected-return
+         (lambda (timestamp value)
+           (cl-case timestamp
+             (past            (memq value '(all near past -1 -2 -3)))
+             (yesteryesterday (memq value '(all near past -1 -2)))
+             (yesterday       (memq value '(all near past -1)))
+             (today           (memq value '(all near past 0)))
+             (tomorrow        (memq value '(all near future 0 1)))
+             (tomorroworrow   (memq value '(all far  future 0 1 2)))
+             (future          (memq value '(all far  future 0 1 2 3))))))
+        ;; Lexically bind the variables we're changing
+        org-agenda-todo-ignore-deadlines
+        org-agenda-todo-ignore-scheduled
+        org-agenda-todo-ignore-timestamp)
+    (org-test-at-time "2023-01-15"
+      (dolist (variable '(org-agenda-todo-ignore-deadlines
+                          org-agenda-todo-ignore-scheduled
+                          org-agenda-todo-ignore-timestamp))
+        (dolist (type '(timestamp scheduled deadline))
+          ;; nil is last so it resets the variable for the next one
+          (dolist (value `(past future all 3 2 1 0 -1 -2 -3
+                                ,@(when (eq type 'deadline) '(near far nil))))
+            (dolist (timestamp '((past .            "<2023-01-01>")
+                                 (yesteryesterday . "<2023-01-13>")
+                                 (yesterday .       "<2023-01-14>")
+                                 (today .           "<2023-01-15>")
+                                 (tomorrow .        "<2023-01-16>")
+                                 (tomorroworrow .   "<2023-01-17>")
+                                 (future .          "<2023-01-31>")))
+              ;; Uncomment to debug failure
+              ;; (message "Type: %S, Variable: %S, Value: %S, Time: %S" type variable value (car timestamp))
+              (set variable value)
+              (org-test-agenda-with-agenda
+                  (cl-case type
+                    (timestamp (concat "* TODO hello\n" (cdr timestamp)))
+                    (scheduled (concat "* TODO hello
+SCHEDULED: " (cdr timestamp)))
+                    (deadline (concat "* TODO hello
+DEADLINE: " (cdr timestamp))))
+                (should
+                 (string-equal
+                  (or (and (funcall expected-return (car timestamp) value)
+                           (cl-case variable
+                             (org-agenda-todo-ignore-deadlines
+                              (eq type 'deadline))
+                             (org-agenda-todo-ignore-scheduled
+                              (eq type 'scheduled))
+                             (org-agenda-todo-ignore-timestamp
+                              (eq type 'timestamp)))
+                           "")
+                      "hello\n")
+                  (progn
+                    (org-agenda nil "f")
+                    (buffer-string))))))))))))
 
 (ert-deftest test-org-agenda/goto-date ()
   "Test `org-agenda-goto-date'."

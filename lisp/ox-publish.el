@@ -1042,7 +1042,7 @@ its CDR is a string."
       (org-element-map (plist-get info :parse-tree) 'keyword
 	(lambda (k)
 	  (when (equal (org-element-property :key k) "INDEX")
-	    (let ((parent (org-export-get-parent-headline k)))
+	    (let ((parent (org-element-lineage k 'headline)))
 	      (list (org-element-property :value k)
 		    file
 		    (cond
@@ -1183,7 +1183,8 @@ references with `org-export-get-reference'."
 		     (org-link-search search nil t)
 		   (error
 		    (signal 'org-link-broken (cdr err)))))
-	       (and (org-at-heading-p)
+	       (and (derived-mode-p 'org-mode)
+                    (org-at-heading-p)
 		    (org-string-nw-p (org-entry-get (point) "CUSTOM_ID"))))))))
    ((not org-publish-cache)
     (progn
@@ -1305,7 +1306,7 @@ the file including them will be republished as well."
 	    (goto-char (point-min))
 	    (while (re-search-forward "^[ \t]*#\\+INCLUDE:" nil t)
 	      (let ((element (org-element-at-point)))
-	        (when (eq 'keyword (org-element-type element))
+	        (when (org-element-type-p element 'keyword)
 		  (let* ((value (org-element-property :value element))
 		         (include-filename
 			  (and (string-match "\\`\\(\".+?\"\\|\\S-+\\)" value)

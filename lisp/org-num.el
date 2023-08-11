@@ -156,6 +156,7 @@ control tag inheritance."
 
 (defvar-local org-num--overlays nil
   "Ordered list of overlays used for numbering outlines.")
+(put 'org-num--overlays 'permanent-local t)
 
 (defvar-local org-num--skip-level nil
   "Level below which headlines from current tree are not numbered.
@@ -213,7 +214,7 @@ Assume point is at a headline."
   (let ((after-edit-functions
          (list (lambda (o &rest _) (org-num--invalidate-overlay o))))
         (o (save-excursion
-             (beginning-of-line)
+             (forward-line 0)
              (skip-chars-forward "*")
              (make-overlay (line-beginning-position) (1+ (point))))))
     (overlay-put o 'org-num t)

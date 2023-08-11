@@ -36,9 +36,11 @@
 
 (declare-function calendar-iso-to-absolute "cal-iso" (date))
 (declare-function notifications-notify "notifications" (&rest params))
-(declare-function org-element-property "org-element" (property element))
-(declare-function org-element-type "org-element" (element))
-(declare-function org-element--cache-active-p "org-element" ())
+(declare-function org-element-property "org-element-ast" (property node))
+(declare-function org-element-contents-end "org-element" (node))
+(declare-function org-element-end "org-element" (node))
+(declare-function org-element-type "org-element-ast" (node &optional anonymous))
+(declare-function org-element-type-p "org-element-ast" (node types))
 (defvar org-element-use-cache)
 (declare-function org-inlinetask-at-task-p "org-inlinetask" ())
 (declare-function org-inlinetask-goto-beginning "org-inlinetask" ())
@@ -911,7 +913,7 @@ If CLOCK-SOUND is non-nil, it overrides `org-clock-sound'."
 	    (if (executable-find "aplay")
 		(start-process "org-clock-play-notification" nil
 			       "aplay" file)
-	      (condition-case nil
+	      (condition-case-unless-debug nil
 		  (play-sound-file file)
 		(error (beep t) (beep t))))))))))
 
@@ -928,9 +930,11 @@ If CLOCK-SOUND is non-nil, it overrides `org-clock-sound'."
       (save-excursion
 	(goto-char (point-min))
 	(while (re-search-forward org-clock-re nil t)
-	  (push (cons (copy-marker (match-end 1) t)
-		      (org-time-string-to-time (match-string 1)))
-		clocks))))
+          (when (save-match-data
+                  (org-element-type-p (org-element-at-point) 'clock))
+	    (push (cons (copy-marker (match-end 1) t)
+		        (org-time-string-to-time (match-string 1)))
+		  clocks)))))
     clocks))
 
 (defsubst org-is-active-clock (clock)
@@ -944,7 +948,7 @@ If CLOCK-SOUND is non-nil, it overrides `org-clock-sound'."
   `(with-current-buffer (marker-buffer (car ,clock))
      (org-with-wide-buffer
       (goto-char (car ,clock))
-      (beginning-of-line)
+      (forward-line 0)
       ,@forms)))
 
 (defmacro org-with-clock (clock &rest forms)
@@ -1050,8 +1054,8 @@ CLOCK is a cons cell of the form (MARKER START-TIME)."
 	   (catch 'exit
 	     (while (re-search-backward drawer-re beg t)
 	       (let ((element (org-element-at-point)))
-		 (when (eq (org-element-type element) 'drawer)
-		   (when (> (org-element-property :end element) (car clock))
+		 (when (org-element-type-p element 'drawer)
+		   (when (> (org-element-end element) (car clock))
 		     (org-fold-hide-drawer-toggle 'off nil element))
 		   (throw 'exit nil)))))))))))
 
@@ -1337,8 +1341,6 @@ time as the start time.  See `org-clock-continuously' to make this
 the default behavior."
   (interactive "P")
   (setq org-clock-notification-was-shown nil)
-  (unless org-element-use-cache
-    (org-refresh-effort-properties))
   (catch 'abort
     (let ((interrupting (and (not org-clock-resolving-clocks-due-to-idleness)
 			     (org-clocking-p)))
@@ -1416,8 +1418,8 @@ the default behavior."
 		  (when newstate (org-todo newstate))))
 	       ((and org-clock-in-switch-to-state
 		     (not (looking-at (concat org-outline-regexp "[ \t]*"
-					    org-clock-in-switch-to-state
-					    "\\>"))))
+					      org-clock-in-switch-to-state
+					      "\\>"))))
 		(org-todo org-clock-in-switch-to-state)))
 	 (setq org-clock-heading (org-clock--mode-line-heading))
 	 (org-clock-find-position org-clock-in-resume)
@@ -1443,12 +1445,15 @@ the default behavior."
 	   (sit-for 2)
 	   (throw 'abort nil))
 	  (t
+           ;; Make sure that point moves after clock line upon
+           ;; inserting it.  Then, users can continue typing even if
+           ;; point was right where the clock is inserted.
 	   (insert-before-markers-and-inherit "\n")
 	   (backward-char 1)
 	   (when (and (save-excursion
 			(end-of-line 0)
 			(org-in-item-p)))
-	     (beginning-of-line 1)
+	     (forward-line 0)
 	     (indent-line-to (max 0 (- (current-indentation) 2))))
 	   (insert-and-inherit org-clock-string " ")
 	   (setq org-clock-effort (org-entry-get (point) org-effort-property))
@@ -1622,9 +1627,9 @@ line and position cursor in that line."
 		       " *\\sw+ +[012][0-9]:[0-5][0-9]\\)\\][ \t]*$")))
 	  (while (re-search-forward open-clock-re end t)
 	    (let ((element (org-element-at-point)))
-	      (when (and (eq (org-element-type element) 'clock)
+	      (when (and (org-element-type-p element 'clock)
 			 (eq (org-element-property :status element) 'running))
-		(beginning-of-line)
+		(forward-line 0)
 		(throw 'exit t))))))
       ;; Look for an existing clock drawer.
       (when drawer
@@ -1632,8 +1637,8 @@ line and position cursor in that line."
 	(let ((drawer-re (concat "^[ \t]*:" (regexp-quote drawer) ":[ \t]*$")))
 	  (while (re-search-forward drawer-re end t)
 	    (let ((element (org-element-at-point)))
-	      (when (eq (org-element-type element) 'drawer)
-		(let ((cend (org-element-property :contents-end element)))
+	      (when (org-element-type-p element 'drawer)
+		(let ((cend (org-element-contents-end element)))
 		  (if (and (not org-log-states-order-reversed) cend)
 		      (goto-char cend)
 		    (forward-line))
@@ -1646,7 +1651,7 @@ line and position cursor in that line."
 	(save-excursion
 	  (while (re-search-forward clock-re end t)
 	    (let ((element (org-element-at-point)))
-	      (when (eq (org-element-type element) 'clock)
+	      (when (org-element-type-p element 'clock)
 		(setq positions (cons (line-beginning-position) positions)
 		      count (1+ count))))))
 	(cond
@@ -1654,13 +1659,16 @@ line and position cursor in that line."
           (org-fold-core-ignore-modifications
 	    ;; Skip planning line and property drawer, if any.
 	    (org-end-of-meta-data)
-	    (unless (bolp) (insert-and-inherit "\n"))
+	    (unless (bolp) (insert-before-markers-and-inherit "\n"))
 	    ;; Create a new drawer if necessary.
 	    (when (and org-clock-into-drawer
 		       (or (not (wholenump org-clock-into-drawer))
 			   (< org-clock-into-drawer 2)))
 	      (let ((beg (point)))
-	        (insert-and-inherit ":" drawer ":\n:END:\n")
+                ;; Make sure that point moves after drawer upon
+                ;; inserting it.  Then, users can continue typing even
+                ;; if point was right where the clock is inserted.
+	        (insert-before-markers-and-inherit ":" drawer ":\n:END:\n")
 	        (org-indent-region beg (point))
                 (if (eq org-fold-core-style 'text-properties)
 	            (org-fold-region
@@ -1691,13 +1699,13 @@ line and position cursor in that line."
 	       "\n:END:\n")
 	      (let ((end (point-marker)))
 	        (goto-char beg)
-	        (save-excursion (insert-and-inherit ":" drawer ":\n"))
+	        (save-excursion (insert-before-markers-and-inherit ":" drawer ":\n"))
 	        (org-fold-region (line-end-position) (1- end) t 'outline)
 	        (org-indent-region (point) end)
 	        (forward-line)
 	        (unless org-log-states-order-reversed
 		  (goto-char end)
-		  (beginning-of-line -1))
+		  (forward-line -2))
 	        (set-marker end nil)))))
 	 (org-log-states-order-reversed (goto-char (car (last positions))))
 	 (t (goto-char (car positions))))))))
@@ -1740,7 +1748,7 @@ to, overriding the existing value of `org-clock-out-switch-to-state'."
 	(save-restriction
 	  (widen)
 	  (goto-char org-clock-marker)
-	  (beginning-of-line 1)
+	  (forward-line 0)
 	  (if (and (looking-at (concat "[ \t]*" org-keyword-time-regexp))
 		   (equal (match-string 1) org-clock-string))
 	      (setq ts (match-string 2))
@@ -1788,10 +1796,10 @@ to, overriding the existing value of `org-clock-out-switch-to-state'."
 		    (when newstate (org-todo newstate))))
 		 ((and org-clock-out-switch-to-state
 		       (not (looking-at
-                           (concat
-                            org-outline-regexp "[ \t]*"
-			    org-clock-out-switch-to-state
-			    "\\>"))))
+                             (concat
+                              org-outline-regexp "[ \t]*"
+			      org-clock-out-switch-to-state
+			      "\\>"))))
 		  (org-todo org-clock-out-switch-to-state))))))
 	  (force-mode-line-update)
 	  (message (if remove
@@ -2142,6 +2150,7 @@ Use `\\[org-clock-remove-overlays]' to remove the subtree times."
 	       h m))))
 
 (defvar-local org-clock-overlays nil)
+(put 'org-clock-overlays 'permanent-local t)
 
 (defun org-clock-put-overlay (time)
   "Put an overlay on the headline at point, displaying TIME.
@@ -2567,7 +2576,7 @@ the currently selected interval size."
 	  (goto-char b)
 	  (insert ins)
 	  (delete-region (point) (+ (point) (- e b)))
-	  (beginning-of-line 1)
+	  (forward-line 0)
 	  (org-update-dblock)
 	  t)))))
 
@@ -2869,13 +2878,13 @@ from the dynamic block definition."
 		 (if timestamp (concat ts "|") "")   ;timestamp, maybe
 		 (if tags (concat (mapconcat #'identity tgs ", ") "|") "")   ;tags, maybe
 		 (if properties		;properties columns, maybe
-		   (concat (mapconcat (lambda (p) (or (cdr (assoc p props)) ""))
-				      properties
-				      "|")
-			   "|")
+		     (concat (mapconcat (lambda (p) (or (cdr (assoc p props)) ""))
+				        properties
+				        "|")
+			     "|")
 		   "")
 		 (if indent		;indentation
-		   (org-clocktable-indent-string level)
+		     (org-clocktable-indent-string level)
 		   "")
 		 (format-field headline)
 		 ;; Empty fields for higher levels.
@@ -2883,7 +2892,7 @@ from the dynamic block definition."
 		 (format-field (org-duration-from-minutes time))
 		 (make-string (max 0 (- time-columns level)) ?|)
 		 (if (eq formula '%)
-		   (format "%.1f |" (* 100 (/ time (float total-time))))
+		     (format "%.1f |" (* 100 (/ time (float total-time))))
 		   "")
 		 "\n")))))))
     (delete-char -1)
@@ -2894,7 +2903,7 @@ from the dynamic block definition."
 	(when (and contents (string-match "^\\([ \t]*#\\+tblfm:.*\\)" contents))
 	  (setq recalc t)
 	  (insert "\n" (match-string 1 contents))
-	  (beginning-of-line 0))))
+	  (forward-line -1))))
      ;; Insert specified formula line.
      ((stringp formula)
       (insert "\n#+TBLFM: " formula)
@@ -3137,7 +3146,7 @@ Otherwise, return nil."
   (let ((origin (point))) ;; `save-excursion' may not work when deleting.
     (prog1
         (save-excursion
-          (beginning-of-line 1)
+          (forward-line 0)
           (skip-chars-forward " \t")
           (when (looking-at org-clock-string)
             (let ((re (concat "[ \t]*" org-clock-string

@@ -13,6 +13,237 @@ Please send Org bug reports to mailto:emacs-orgmode@gnu.org.
 
 * Version 9.7 (not released yet)
 ** Important announcements and breaking changes
+*** New export option ~org-export-expand-links~
+
+The new option makes Org expand environment variables in link and INCLUDE paths.
+The option is on by default.
+
+Users who do not want variable expansion can set
+~org-export-expand-links~ variable to nil or provide
+=expand-links:nil= in-file export option.
+
+*** ~org-store-link~ now moves an already stored link to front of the ~org-stored-links~
+
+Previously, when the link to be stored were stored already,
+~org-store-link~ displayed a message and did nothing.
+
+Now, ~org-store-link~ moves the stored link to front of the list of
+stored links.  This way, the link will show up first in the completion
+and when inserting all the stored links with ~org-insert-all-links~.
+
+The new behavior is controlled by new customization ~org-link-store-existing~.
+
+Users can set ~org-link-store-existing~ to nil to revert previous
+defaults.  The value of =store-duplicate= will force duplicate links
+in ~org-stored-links~.  The default value is =move-to-front=.
+
+*** Major changes and additions to Org API
+**** New term: "syntax node"
+
+To reduce confusion with "element" referring to both "syntax element"
+and "element/object" class, we now prefer using "syntax node" when
+referring to generic Org syntax elements.  "Elements" and "objects"
+now refer to different syntax node classes of paragraph-like nodes and
+markup-like nodes.
+
+**** New element type ~anonymous~
+
+Secondary strings can now be recognized as ~anonymous~ type to
+distinguish from non-elements.  With a new optional argument,
+~org-element-type~ will return ~anonymous~ for secondary strings
+instead of nil.
+
+The new element type can be used in ~org-element-lineage~,
+~org-element-map~, and other functions that filter by element type.
+
+**** Internal structure of Org parse tree has been changed
+
+The code relying upon the previously used =(TYPE PROPERTIES-PLIST CONTENTS-LIST)=
+structure may no longer work.  Please use ~org-element-create~,
+~org-element-property~, and other Org element API functions to work
+with Org syntax trees.
+
+Some syntax node properties are no longer stored as property list elements.
+Instead, they are kept in a special vector value of a new
+=:standard-properties= property.  This is done to improve performance.
+
+If there is a need to traverse all the node properties, a new API
+function ~org-element-properties-map~ can be used.
+
+Properties and their values can now be deferred to avoid overheads
+when parsing.  They are calculated lazily, when the value/property is
+requested by ~org-element-property~ and other getter functions.  Using
+~plist-get~ to retrieve values of =PROPERTIES-PLIST= is not
+recommended as deferred properties will not be resolved in such
+scenario.
+
+New special property =:secondary= is used internally to record which
+properties store secondary objects.
+
+New special property =:deferred= is used to keep information how to
+calculate property names lazily.
+
+See the commentary in =lisp/org-element-ast.el= for more details.
+
+**** Multiple affiliated keyword values are now stored in the order they appear in buffer
+
+Previously,
+
+: #+caption: foo
+: #+caption: bar
+: Paragraph
+
+would have its =:caption= property set to ~(("bar") ("foo"))~ in reverse order.
+
+Now, the order is not reversed: ~(("foo") ("bar"))~.
+
+**** Some property values may now be calculated lazily and require original Org buffer to be live
+
+~org-element-at-point~, ~org-element-context~, and
+~org-element-at-point-no-context~ may now not calculate all the
+property values at the call time.  Instead, the calculation will be
+deferred until ~org-element-property~ or the equivalent getter
+function is called.  The property names may not all be calculated as
+well.
+
+It may often be necessary to have the original Org buffer open when
+resolving the deferred values.
+
+One can ensure that all the deferred values are resolved using new
+function ~org-element-resolve-deferred~ and new optional argument for
+~org-element-property~.
+
+~org-element-parse-buffer~ and ~org-element-parse-secondary-string~
+will resolve all the deferred values by default.  No adjustment is
+needed for their users.
+
+**** New API functions and macros
+***** New property accessors and setters
+
+New functions to retrieve and set (via ~setf~) commonly used element properties:
+- =:begin= :: ~org-element-begin~
+- =:end= :: ~org-element-end~
+- =:contents-begin= :: ~org-element-contents-begin~
+- =:contents-end= :: ~org-element-contents-end~
+- =:contents-post-affiliated= :: ~org-element-post-affiliated~
+- =:contents-post-blank= :: ~org-element-post-blank~
+- =:parent= :: ~org-element-parent~
+
+***** New macro ~org-element-with-enabled-cache~
+
+The macro arranges the element cache to be active during =BODY= execution.
+When cache is enabled, the macro is identical to ~progn~.  When cache
+is disabled, the macro arranges a new fresh cache that is discarded
+upon completion of =BODY=.
+
+***** New function ~org-element-property-raw~
+
+This function is like ~org-element-property~ but does not try to
+resolve deferred properties.
+
+~org-element-property-raw~ can be used with ~setf~.
+
+***** New function ~org-element-put-property-2~
+
+Like ~org-element-put-property~, but the argument list is changed to have
+=NODE= as the last argument.  Useful with threading macros like
+~thread-last~.
+
+***** New function ~org-element-properties-resolve~
+
+This function resolves all the deferred values in a =NODE=, modifying
+the =NODE= for side effect.
+
+***** New functions ~org-element-properties-map~ and ~org-element-properties-mapc~
+
+New functions to map over =NODE= properties.
+
+***** New function ~org-element-ast-map~
+
+This is a more general equivalent of ~org-element-map~.  It allows
+more precise control over recursion into secondary strings.
+
+***** New function ~org-element-lineage-map~
+
+Traverse syntax tree ancestor list, applying arbitrary function to
+each ancestor.
+
+***** New function ~org-element-property-inherited~
+
+Like ~org-element-property~, but can be used to retrieve and combine
+multiple different properties for a given =NODE= and its parents.
+
+**** ~org-element-cache-map~ can now be used even when element cache is disabled
+
+**** =org-element= API functions and macros can now accept syntax nodes as =POM= argument
+
+The following functions are updated:
+- ~org-agenda-entry-get-agenda-timestamp~
+- ~org-element-at-point~
+- ~org-is-habit-p~
+- ~org-id-get~
+- ~org-with-point-at~
+- ~org-entry-properties~
+- ~org-entry-get~
+- ~org-entry-delete~
+- ~org-entry-add-to-multivalued-property~
+- ~org-entry-remove-from-multivalued-property~
+- ~org-entry-member-in-multivalued-property~
+- ~org-entry-put-multivalued-property~
+- ~org-entry-get-with-inheritance~
+- ~org-entry-put~
+- ~org-read-property-value~
+- ~org-property-get-allowed-values~
+
+**** ~org-element-map~ now traverses main value in dual keywords before the secondary value
+
+The traverse order for dual keywords is reversed.  The main value is
+now traversed first, followed by the secondary value.
+
+**** Org parse tree is now non-printable
+
+Org parser now assigns a new property =:buffer= that holds
+non-printable buffer object.  This makes syntax tree non-printable.
+Using ~print~/~read~ is no longer safe.
+
+**** Some Org API functions no longer preserve match data
+
+~org-element-at-point~, ~org-element-context~, ~org-get-category~, and
+~org-get-tags~ may modify the match data.
+
+The relevant function docstrings now explicitly mention that match
+data may be modified.
+
+**** ~org-element-create~ now treats a single ~anonymous~ =CHILDREN= argument as a list of child nodes
+
+When =CHILDREN= is a single anonymous node, use its contents as children
+nodes.  This way,
+
+: (org-element-create 'section nil (org-element-contents node))
+
+will yield expected results with contents of another node adopted into
+a newly created one.
+
+Previously, one had to use
+
+: (apply #'org-element-create 'section nil (org-element-contents node))
+**** New property ~:range-type~ for org-element timestamp object
+
+~org-element-timestamp-parser~ now adds =:range-type= property to each
+timestamp object.  Possible values: ~timerange~, ~daterange~, ~nil~.
+
+~org-element-timestamp-interpreter~ takes into account this property
+and returns an appropriate timestamp string.
+
+*** ~org-priority=show~ command no longer adjusts for scheduled/deadline
+
+In agenda views, ~org-priority=show~ command previously displayed the
+composite rank consisting of the item priority and overdue.  This is
+no longer the case.  The displayed and returned value only depends on
+the item priority now.
+
+The behavior in Org buffers is unchanged.
+
 *** "Priority" used to sort items in agenda is renamed to "urgency"
 
 Previously, ~priority-up~ and ~priority-down~ in
@@ -49,6 +280,35 @@ This might cause errors in external packages that parse output from
 ox-icalendar.  In particular, older versions of org-caldav may
 encounter issues, and users are advised to update to the most recent
 version of org-caldav.  See [[https://github.com/dengste/org-caldav/commit/618bf4cdc9be140ca1993901d017b7f18297f1b8][this org-caldav commit]] for more information.
+
+*** Icalendar export of unscheduled TODOs no longer have start time of today
+
+For TODOs without a scheduled start time, ox-icalendar no longer
+forces them to have a scheduled start time of today when exporting.
+
+Instead, the new customization ~org-icalendar-todo-unscheduled-start~
+controls the exported start date for unscheduled tasks.  Its default
+is ~recurring-deadline-warning~ which will export unscheduled tasks
+with no start date, unless it has a recurring deadline (in which case
+the iCalendar spec demands a start date, and
+~org-deadline-warning-days~ is used for that).
+
+To revert to the old behavior, set
+~org-icalendar-todo-unscheduled-start~ to ~current-datetime~.
+
+*** =org-habit.el= now optionally inherits ~:STYLE: habit~ properties
+
+Currently, the ~STYLE~ property of habits is not inherited when searching
+for entries.
+
+This change allows the property to be inherited optionally by customizing
+the ~org-use-property-inheritance~ variable.
+
+This change aims to provide more flexibility in managing habits, allowing
+users to dedicate separate subtrees or files to habits without manually
+setting the ~STYLE~ property for each sub-task.
+
+The change is breaking when ~org-use-property-inheritance~ is set to ~t~.
 
 ** New and changed options
 *** Commands affected by ~org-fold-catch-invisible-edits~ can now be customized
@@ -180,7 +440,58 @@ backend used for evaluation of ClojureScript.
 official [[https://clojure.org/guides/deps_and_cli][Clojure CLI tools]].
 The command can be customized with ~ob-clojure-cli-command~.
 
+*** New customization options for ~org-export-dispatch~
+
+New custom variables ~org-export-body-only~,
+~org-export-visible-only~, and ~org-export-force-publishing~ allow the
+default settings of "Body only", "Visible only", and "Force
+publishing" in the ~org-export-dispatch~ UI to be customized,
+respectively.
+
+*** New option ~org-icalendar-todo-unscheduled-start~ to control unscheduled TODOs in ox-icalendar
+
+~org-icalendar-todo-unscheduled-start~ controls how ox-icalendar
+exports the starting datetime for unscheduled TODOs.  Note this option
+only has an effect when ~org-icalendar-include-todo~ is non-nil.
+
+By default, ox-icalendar will not export a start datetime for
+unscheduled TODOs, except in cases where the iCalendar spec demands a
+start (specifically, for recurring deadlines, in which case
+~org-deadline-warning-days~ is used).
+
+Currently implemented options are:
+
+- ~recurring-deadline-warning~: The default as described above.
+- ~deadline-warning~: Use ~org-deadline-warning-days~ to set the start
+  time if the unscheduled task has a deadline (recurring or not).
+- ~current-datetime~: Revert to old behavior, using the current
+  datetime as the start of unscheduled tasks.
+- ~nil~: Never add a start time for unscheduled tasks.  For repeating
+  tasks this technically violates the iCalendar spec, but some
+  iCalendar programs support this usage.
+
 ** New features
+*** New final hooks for Modifier-Cursor keys
+
+Final hooks are added to the following commands:
+- ~org-metaleft-final-hook~ to ~org-metaleft~ (bound to =M-<left>=).
+- ~org-metaright-final-hook~ to ~org-metaright~ (bound to
+  =M-<right>=).
+- ~org-metaup-final-hook~ to ~org-metaup~ (bound to =M-<up>=).
+- ~org-metadown-final-hook~ to ~org-metadown~ (bound to =M-<down>=).
+- ~org-shiftmetaleft-final-hook~ to ~org-shiftmetaleft~ (bound to
+  =M-S-<left>=).
+- ~org-shiftmetaright-final-hook~ to ~org-shiftmetaright~ (bound to
+  =M-S-<right>=).
+- ~org-shiftmetaup-final-hook~ to ~org-shiftmetaup~ (bound to
+  =M-S-<up>=).
+- ~org-shiftmetadown-final-hook~ to ~org-shiftmetadown~ (bound to
+  =M-S-<down>=).
+
+*** ~org-insert-todo-heading-respect-content~ now accepts prefix arguments
+
+The prefix arguments are passed to ~org-insert-todo-heading~.
+
 *** Add support for ~logind~ idle time in ~org-user-idle-seconds~
 
 When Emacs is built with =dbus= support and
@@ -213,7 +524,125 @@ Running shell blocks with the ~:session~ header freezes Emacs until
 execution completes.  The new ~:async~ header allows users to continue
 editing with Emacs while a ~:session~ block executes.
 
+*** ~org-return~ now acts on citations at point
+
+When ~org-return-follows-link~ is non-nil and cursor is over an
+org-cite citation, ~org-return~ will call ~org-open-at-point~.
+
+*** Add support for repeating tasks in iCalendar export
+
+Repeating Scheduled and Deadline timestamps in TODOs are now exported
+as recurring tasks in iCalendar export.
+
+In case the TODO has just a single planning timestamp (Scheduled or
+Deadline, but not both), its repeater is used as the iCalendar
+recurrence rule (RRULE).
+
+If the TODO has both Scheduled and Deadline planning timestamps, then
+the following cases are implemented:
+
+- If both have the same repeater, then it is used as the RRULE.
+- Scheduled has repeater but Deadline does not: the Scheduled repeater
+  is used as RRULE, and Deadline is used as UNTIL (the end date for
+  the repeater). This is similar to ~repeated-after-deadline~ in
+  ~org-agenda-skip-scheduled-if-deadline-is-shown~.
+
+The following 2 cases are not yet implemented, and the repeater is
+skipped (with a warning) if the ox-icalendar export encounters them:
+
+- Deadline has a repeater but Scheduled does not.
+- Scheduled and Deadline have different repeaters.
+
+Also note that only vanilla repeaters are currently exported; the
+special repeaters ~++~ and ~.+~ are skipped.
+
+*** Capture templates now support ~(here)~ as a target
+
+A capture template can target ~(here)~ which is the equivalent of
+invoking a capture template with a zero prefix.
+
+*** ~org-tags-view~ supports more property operators
+
+It supports inequality operators ~!=~ and ~/=~ in addition to the less
+common (BASIC?  Pascal?  SQL?) ~<>~.  And it supports starred versions
+of all relational operators (~<*~, ~=*~, ~!=*~, etc.) that work like
+the regular, unstarred operators but match a headline only if the
+tested property is actually present.
+
+** New functions and changes in function arguments
+*** =TYPES= argument in ~org-element-lineage~ can now be a symbol
+
+When =TYPES= is symbol, only check syntax nodes of that type.
+
+*** New optional argument =KEEP-CONTENTS= for ~org-element-copy~
+
+With the new argument, the contents is copied recursively.
+
+*** ~org-element-property~ can now be used with ~setf~
+
+*** New optional arguments for ~org-element-property~
+
+The value of the new optional argument =DFLT= is returned if the
+property with given name is not present.  Same as =DEFAULT= argument
+for ~alist-get~.
+
+New optional argument =FORCE-UNDEFER= modifies the =NODE=, storing the
+resolved deferred values.
+
+See the top comment in =lisp/org-element-ast.el= for more details
+about the deferred values.
+
+*** New optional argument =NO-UNDEFER= in ~org-element-map~ and changed argument conventions
+
+New optional argument =NO-UNDEFER=, when non-nil, will make
+~org-element-map~ keep deferred secondary string values in their raw
+form.  See the top comment in =lisp/org-element-ast.el= for more
+details about the deferred values.
+
+=TYPES= argument can now be set to ~t~.  This will match all the
+syntax nodes when traversing the tree.
+
+~FUN~ can now be a lisp form that will be evaluated with symbol ~node~
+assigned to the current syntax node.
+
+~FUN~ can now throw ~:org-element-skip~ signal to skip recursing into
+current element children and secondary strings.
+
+*** New optional argument =KEEP-DEFERRED= in ~org-element-parse-buffer~
+
+When non-nil, the deferred values and properties will not be resolved.
+See the top comment in =lisp/org-element-ast.el= for more details
+about the deferred values.
+
+*** New optional argument =ANONYMOUS= for ~org-element-type~
+
+When the new argument is non-nil, return symbol ~anonymous~ for anonymous elements.
+Previously, ~nil~ would be returned.
+
+*** ~org-element-adopt-elements~ is renamed to ~org-element-adopt~
+
+The old name is kept as an alias.  The new name creates less confusion
+as the function can also act on objects.
+
+*** ~org-element-extract-element~ is renamed to ~org-element-extract~
+
+The old name is kept as an alias.  The new name creates less confusion
+as the function can also act on objects.
+
+*** ~org-element-set-element~ is renamed to ~org-element-set~
+
+The old name is kept as an alias.  The new name creates less confusion
+as the function can also act on objects.
+
+*** ~org-export-get-parent~ is renamed to ~org-element-parent~ and moved to =lisp/org-element.el=
+
+*** ~org-export-get-parent-element~ is renamed to ~org-element-parent-element~ and moved to =lisp/org-element.el=
+
 ** Miscellaneous
+*** =org-crypt.el= now applies initial visibility settings to decrypted entries
+
+Previously, all the text was unfolded unconditionally, including property drawers.
+
 *** Blank lines after removed objects are not retained during export
 
 When certain objects in Org document are to be excluded from export,
@@ -456,6 +885,7 @@ After:
 ,#+RESULTS:
 : ("simple" "list")
 #+end_src
+
 
 ** New features
 *** Clock table can now produce quarterly reports

@@ -40,11 +40,11 @@
 (declare-function org-babel-update-block-body "ob-core" (new-body))
 (declare-function org-back-to-heading "org" (&optional invisible-ok))
 (declare-function org-before-first-heading-p "org" ())
-(declare-function org-element--cache-active-p "org-element" ())
-(declare-function org-element-lineage "org-element" (datum &optional types with-self))
-(declare-function org-element-property "org-element" (property element))
+(declare-function org-element-lineage "org-element-ast" (datum &optional types with-self))
+(declare-function org-element-property "org-element-ast" (property node))
+(declare-function org-element-begin "org-element" (node))
 (declare-function org-element-at-point "org-element" (&optional pom cached-only))
-(declare-function org-element-type "org-element" (element))
+(declare-function org-element-type-p "org-element-ast" (node types))
 (declare-function org-heading-components "org" ())
 (declare-function org-in-commented-heading-p "org" (&optional no-inheritance))
 (declare-function org-in-archived-heading-p "org" (&optional no-inheritance))
@@ -378,7 +378,7 @@ references."
   (goto-char (point-min))
   (while (or (re-search-forward "\\[\\[file:.*\\]\\[.*\\]\\]" nil t)
              (re-search-forward (org-babel-noweb-wrap) nil t))
-    (delete-region (save-excursion (beginning-of-line 1) (point))
+    (delete-region (save-excursion (forward-line) (point))
                    (save-excursion (end-of-line 1) (forward-char 1) (point)))))
 
 (defun org-babel-spec-to-string (spec)
@@ -427,17 +427,19 @@ that the appropriate major-mode is set.  SPEC has the form:
 		org-babel-tangle-comment-format-end link-data)))))
 
 (defun org-babel-effective-tangled-filename (buffer-fn src-lang src-tfile)
-  "Return effective tangled filename of a source-code block.
-BUFFER-FN is the name of the buffer, SRC-LANG the language of the
-block and SRC-TFILE is the value of the :tangle header argument,
-as computed by `org-babel-tangle-single-block'."
-  (let ((base-name (cond
-                    ((string= "yes" src-tfile)
-                     ;; Use the buffer name
-                     (file-name-sans-extension buffer-fn))
-                    ((string= "no" src-tfile) nil)
-                    ((> (length src-tfile) 0) src-tfile)))
-        (ext (or (cdr (assoc src-lang org-babel-tangle-lang-exts)) src-lang)))
+  "Return effective tangled absolute filename of a source-code block.
+BUFFER-FN is the absolute file name of the buffer, SRC-LANG the
+language of the block and SRC-TFILE is the value of the :tangle
+header argument, as computed by `org-babel-tangle-single-block'."
+  (let* ((fnd (file-name-directory buffer-fn))
+         (base-name (cond
+                     ((string= "yes" src-tfile)
+                      ;; Use the buffer name
+                      (file-name-sans-extension buffer-fn))
+                     ((string= "no" src-tfile) nil)
+                     ((> (length src-tfile) 0)
+                      (expand-file-name src-tfile fnd))))
+         (ext (or (cdr (assoc src-lang org-babel-tangle-lang-exts)) src-lang)))
     (when base-name
       ;; decide if we want to add ext to base-name
       (if (and ext (string= "yes" src-tfile))
@@ -454,13 +456,16 @@ source code blocks by languages matching a regular expression.
 
 Optional argument TANGLE-FILE can be used to limit the collected
 code blocks by target file."
-  (let ((counter 0) last-heading-pos blocks)
+  (let ((counter 0)
+        (buffer-fn (buffer-file-name (buffer-base-buffer)))
+        last-heading-pos blocks)
     (org-babel-map-src-blocks (buffer-file-name)
       (let ((current-heading-pos
-             (if (org-element--cache-active-p)
-                 (or (org-element-property :begin (org-element-lineage (org-element-at-point) '(headline) t)) 1)
-	       (org-with-wide-buffer
-	        (org-with-limited-levels (outline-previous-heading))))))
+             (or (org-element-begin
+                  (org-element-lineage
+                   (org-element-at-point)
+                   'headline t))
+                 1)))
 	(if (eq last-heading-pos current-heading-pos) (cl-incf counter)
 	  (setq counter 1)
 	  (setq last-heading-pos current-heading-pos)))
@@ -477,7 +482,7 @@ code blocks by target file."
 	    (let* ((block (org-babel-tangle-single-block counter))
                    (src-tfile (cdr (assq :tangle (nth 4 block))))
 		   (file-name (org-babel-effective-tangled-filename
-                               (nth 1 block) src-lang src-tfile))
+                               buffer-fn src-lang src-tfile))
 		   (by-fn (assoc file-name blocks)))
 	      (if by-fn (setcdr by-fn (cons (cons src-lang block) (cdr by-fn)))
 		(push (cons file-name (list (cons src-lang block))) blocks)))))))
@@ -491,12 +496,7 @@ code blocks by target file."
 The PARAMS are the 3rd element of the info for the same src block."
   (unless (string= "no" (cdr (assq :comments params)))
     (save-match-data
-      (let* (;; The created link is transient.  Using ID is not necessary,
-             ;; but could have side-effects if used.  An ID property may
-             ;; be added to existing entries thus creating unexpected file
-             ;; modifications.
-             (org-id-link-to-org-use-id nil)
-             (l (org-no-properties
+      (let* ((l (org-no-properties
                  (cl-letf (((symbol-function 'org-store-link-functions)
                             (lambda () nil)))
                    (org-store-link nil))))
@@ -513,6 +513,7 @@ The PARAMS are the 3rd element of the info for the same src block."
                                            (cdr (assq :tangle params)))))
             bare))))))
 
+(defvar org-outline-regexp) ; defined in lisp/org.el
 (defun org-babel-tangle-single-block (block-counter &optional only-this-block)
   "Collect the tangled source for current block.
 Return the list of block attributes needed by
@@ -570,8 +571,8 @@ non-nil, return the full association list to be used by
 	     (buffer-substring
 	      (max (condition-case nil
 		       (save-excursion
-			 (org-back-to-heading t) ; Sets match data
-			 (match-end 0))
+			 (org-back-to-heading t)
+			 (re-search-forward org-outline-regexp))
 		     (error (point-min)))
 		   (save-excursion
 		     (if (re-search-backward
@@ -588,13 +589,12 @@ non-nil, return the full association list to be used by
 		link
 		source-name
 		params
-		(if org-src-preserve-indentation
-		    (org-trim body t)
+		(if (org-src-preserve-indentation-p) (org-trim body t)
 		  (org-trim (org-remove-indentation body)))
 		comment)))
     (if only-this-block
         (let* ((file-name (org-babel-effective-tangled-filename
-                           (nth 1 result) src-lang src-tfile)))
+                           file src-lang src-tfile)))
           (list (cons file-name (list (cons src-lang result)))))
       result)))
 
@@ -672,8 +672,7 @@ which enable the original code blocks to be found."
 	      (org-back-to-heading t))
 	    ;; Do not skip the first block if it begins at point min.
 	    (cond ((or (org-at-heading-p)
-		       (not (eq (org-element-type (org-element-at-point))
-				'src-block)))
+		       (not (org-element-type-p (org-element-at-point) 'src-block)))
 		   (org-babel-next-src-block n))
 		  ((= n 1))
 		  (t (org-babel-next-src-block (1- n)))))

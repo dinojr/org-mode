@@ -37,13 +37,13 @@
 (declare-function org-agenda-redo "org-agenda" (&optional all))
 (declare-function org-agenda-do-context-action "org-agenda" ())
 (declare-function org-clock-sum-today "org-clock" (&optional headline-filter))
-(declare-function org-element-extract-element "org-element" (element))
+(declare-function org-element-extract "org-element-ast" (node))
 (declare-function org-element-interpret-data "org-element" (data))
 (declare-function org-element-map "org-element" (data types fun &optional info first-match no-recursion with-affiliated))
 (declare-function org-element-parse-secondary-string "org-element" (string restriction &optional parent))
-(declare-function org-element-property "org-element" (property element))
+(declare-function org-element-property "org-element-ast" (property node))
 (declare-function org-element-restriction "org-element" (element))
-(declare-function org-element-type "org-element" (element))
+(declare-function org-element-type-p "org-element-ast" (node types))
 (declare-function org-dynamic-block-define "org" (type func))
 (declare-function org-link-display-format "ol" (s))
 (declare-function org-link-open-from-string "ol" (s &optional arg))
@@ -116,6 +116,7 @@ in `org-columns-summary-types-default', which see."
 
 (defvar-local org-columns-overlays nil
   "Holds the list of current column overlays.")
+(put 'org-columns-overlays 'permanent-local t)
 
 (defvar-local org-columns-current-fmt nil
   "Local variable, holds the currently active column format.")
@@ -186,18 +187,18 @@ See `org-columns-summary-types' for details.")
 (org-defkey org-columns-map [down]
 	    (lambda () (interactive)
 	      (let ((col (current-column)))
-		(beginning-of-line 2)
+		(forward-line 1)
 		(while (and (org-invisible-p2) (not (eobp)))
-		  (beginning-of-line 2))
+		  (forward-line 1))
 		(move-to-column col)
 		(if (derived-mode-p 'org-agenda-mode)
 		    (org-agenda-do-context-action)))))
 (org-defkey org-columns-map [up]
 	    (lambda () (interactive)
 	      (let ((col (current-column)))
-		(beginning-of-line 0)
+		(forward-line -1)
 		(while (and (org-invisible-p2) (not (bobp)))
-		  (beginning-of-line 0))
+		  (forward-line -1))
 		(move-to-column col)
 		(if (eq major-mode 'org-agenda-mode)
 		    (org-agenda-do-context-action)))))
@@ -385,7 +386,7 @@ DATELINE is non-nil when the face used should be
     (setq org-columns-header-line-remap
 	  (face-remap-add-relative 'header-line '(:inherit default))))
   (save-excursion
-    (beginning-of-line)
+    (forward-line 0)
     (let* ((level-face (and (looking-at "\\(\\**\\)\\(\\* \\)")
 			    (org-get-level-face 2)))
 	   (ref-face (or level-face
@@ -452,14 +453,30 @@ DATELINE is non-nil when the face used should be
 	    "Type \\<org-columns-map>`\\[org-columns-edit-value]' \
 to edit property")))))))
 
+(defun org-columns--truncate-below-width (string width)
+  "Return a substring of STRING no wider than WIDTH.
+This substring must start at 0, and must be the longest possible
+substring whose `string-width' does not exceed WIDTH."
+  (declare (side-effect-free t))
+  (let ((end (min width (length string))) res)
+    (while (and end (>= end 0))
+      (let* ((curr (string-width (substring string 0 end)))
+             (excess (- curr width)))
+        (if (> excess 0)
+            (cl-decf end (max 1 (/ excess 2)))
+          (setq res (substring string 0 end) end nil))))
+    res))
+
 (defun org-columns-add-ellipses (string width)
   "Truncate STRING with WIDTH characters, with ellipses."
   (cond
-   ((<= (length string) width) string)
-   ((<= width (length org-columns-ellipses))
-    (substring org-columns-ellipses 0 width))
-   (t (concat (substring string 0 (- width (length org-columns-ellipses)))
-	      org-columns-ellipses))))
+   ((<= (string-width string) width) string)
+   ((<= width (string-width org-columns-ellipses))
+    (org-columns--truncate-below-width org-columns-ellipses width))
+   (t (concat
+       (org-columns--truncate-below-width
+        string (- width (string-width org-columns-ellipses)))
+       org-columns-ellipses))))
 
 (defvar org-columns-full-header-line-format nil
   "The full header line format, will be shifted by horizontal scrolling." )
@@ -816,7 +833,7 @@ current specifications.  This function also sets
 		(let ((case-fold-search t))
 		  (while (re-search-forward "^[ \t]*#\\+COLUMNS: .+$" nil t)
 		    (let ((element (org-element-at-point)))
-		      (when (eq (org-element-type element) 'keyword)
+		      (when (org-element-type-p element 'keyword)
 			(throw :found (org-element-property :value element)))))
 		  nil)))
 	     org-columns-default-format)))
@@ -1020,7 +1037,7 @@ the current buffer."
 	    (catch :found
 	      (while (re-search-forward "^[ \t]*#\\+COLUMNS:\\(.*\\)" nil t)
 		(let ((element (save-match-data (org-element-at-point))))
-		  (when (and (eq (org-element-type element) 'keyword)
+		  (when (and (org-element-type-p element 'keyword)
 			     (equal (org-element-property :key element)
 				    "COLUMNS"))
 		    (replace-match (concat " " fmt) t t nil 1)
@@ -1422,7 +1439,7 @@ an inline src-block."
     (org-element-map data
 	'(footnote-reference inline-babel-call inline-src-block target
 			     radio-target statistics-cookie)
-      #'org-element-extract-element)
+      #'org-element-extract)
     (org-no-properties (org-element-interpret-data data))))
 
 ;;;###autoload

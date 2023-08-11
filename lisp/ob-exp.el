@@ -32,8 +32,10 @@
 (declare-function org-babel-lob-get-info "ob-lob" (&optional datum no-eval))
 (declare-function org-element-at-point "org-element" (&optional pom cached-only))
 (declare-function org-element-context "org-element" (&optional element))
-(declare-function org-element-property "org-element" (property element))
-(declare-function org-element-type "org-element" (element))
+(declare-function org-element-property "org-element-ast" (property node))
+(declare-function org-element-begin "org-element" (node))
+(declare-function org-element-end "org-element" (node))
+(declare-function org-element-type "org-element-ast" (node &optional anonymous))
 (declare-function org-escape-code-in-string "org-src" (s))
 (declare-function org-export-copy-buffer "ox"
                   (&optional buffer drop-visibility
@@ -41,8 +43,7 @@
                              drop-locals))
 (declare-function org-in-commented-heading-p "org" (&optional no-inheritance element))
 (declare-function org-in-archived-heading-p "org" (&optional no-inheritance element))
-
-(defvar org-src-preserve-indentation)
+(declare-function org-src-preserve-indentation-p "org-src" (node))
 
 (defcustom org-export-use-babel t
   "Switch controlling code evaluation and header processing during export.
@@ -171,7 +172,7 @@ this template."
 	    ;; buffer.
 	    (org-fold-core-ignore-modifications
 	      (while (re-search-forward regexp nil t)
-		(setq element (org-element-at-point))
+		(setq element (save-match-data (org-element-at-point)))
 		(unless (save-match-data
 			  (or (org-in-commented-heading-p nil element)
 			      (org-in-archived-heading-p nil element)))
@@ -195,11 +196,11 @@ this template."
 			     nil)
 			    (type type)))
 			 (begin
-			  (copy-marker (org-element-property :begin element)))
+			  (copy-marker (org-element-begin element)))
 			 (end
 			  (copy-marker
 			   (save-excursion
-			     (goto-char (org-element-property :end element))
+			     (goto-char (org-element-end element))
 			     (skip-chars-backward " \r\t\n")
 			     (point)))))
 		    (pcase type
@@ -277,28 +278,26 @@ this template."
 				 ((equal replacement "")
 				  (goto-char end)
 				  (skip-chars-forward " \r\t\n")
-				  (beginning-of-line)
+				  (forward-line 0)
 				  (delete-region begin (point)))
 				 (t
-				  (if (or org-src-preserve-indentation
-					  (org-element-property
-					   :preserve-indent element))
+				  (if (org-src-preserve-indentation-p element)
 				      ;; Indent only code block
 				      ;; markers.
 				      (with-temp-buffer
-					;; Do not use tabs for block
-					;; indentation.
-					(when (fboundp 'indent-tabs-mode)
+				        ;; Do not use tabs for block
+				        ;; indentation.
+				        (when (fboundp 'indent-tabs-mode)
 					  (indent-tabs-mode -1)
 					  ;; FIXME: Emacs 26
 					  ;; compatibility.
 					  (setq-local indent-tabs-mode nil))
-					(insert replacement)
-					(skip-chars-backward " \r\t\n")
-					(indent-line-to ind)
-					(goto-char 1)
-					(indent-line-to ind)
-					(setq replacement (buffer-string)))
+				        (insert replacement)
+				        (skip-chars-backward " \r\t\n")
+				        (indent-line-to ind)
+				        (goto-char 1)
+				        (indent-line-to ind)
+				        (setq replacement (buffer-string)))
 				    ;; Indent everything.
 				    (with-temp-buffer
 				      ;; Do not use tabs for block

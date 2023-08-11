@@ -70,6 +70,7 @@
 ;; - non-footnote definitions in footnote section,
 ;; - probable invalid keywords,
 ;; - invalid blocks,
+;; - mismatched repeaters in planning info line,
 ;; - misplaced planning info line,
 ;; - probable incomplete drawers,
 ;; - probable indented diary-sexps,
@@ -194,7 +195,7 @@ for `tabulated-list-printer'."
   (with-current-buffer buffer
     (save-excursion
       (goto-char (point-min))
-      (let ((ast (org-element-parse-buffer))
+      (let ((ast (org-element-parse-buffer nil nil 'defer))
 	    (id 0)
 	    (last-line 1)
 	    (last-pos 1))
@@ -208,10 +209,12 @@ for `tabulated-list-printer'."
 		   (cons
 		    (progn
 		      (goto-char (car report))
-		      (beginning-of-line)
-		      (prog1 (number-to-string
-			      (cl-incf last-line
-				       (count-lines last-pos (point))))
+		      (forward-line 0)
+		      (prog1 (propertize
+                              (number-to-string
+			       (cl-incf last-line
+				        (count-lines last-pos (point))))
+                              'org-lint-marker (car report))
 			(setf last-pos (point))))
 		    (cdr report)))))
 	 ;; Insert trust level in generated reports.  Also sort them
@@ -221,7 +224,7 @@ for `tabulated-list-printer'."
 		  (let ((trust (symbol-name (org-lint-checker-trust c))))
 		    (mapcar
 		     (lambda (report)
-		       (list (car report) trust (nth 1 report) c))
+		       (list (copy-marker (car report)) trust (nth 1 report) c))
 		     (save-excursion
 		       (funcall (org-lint-checker-function c)
 			        ast)))))
@@ -244,6 +247,10 @@ for `tabulated-list-printer'."
   "Return current report line, as a number."
   (string-to-number (aref (tabulated-list-get-entry) 0)))
 
+(defun org-lint--current-marker ()
+  "Return current report marker."
+  (get-text-property 0 'org-lint-marker (aref (tabulated-list-get-entry) 0)))
+
 (defun org-lint--current-checker (&optional entry)
   "Return current report checker.
 When optional argument ENTRY is non-nil, use this entry instead
@@ -265,9 +272,9 @@ CHECKERS is the list of checkers used."
 (defun org-lint--jump-to-source ()
   "Move to source line that generated the report at point."
   (interactive)
-  (let ((l (org-lint--current-line)))
+  (let ((mk (org-lint--current-marker)))
     (switch-to-buffer-other-window org-lint--source-buffer)
-    (org-goto-line l)
+    (goto-char mk)
     (org-fold-show-set-visibility 'local)
     (recenter)))
 
@@ -386,7 +393,7 @@ called with one argument, the key used for comparison."
      (and (org-string-equal-ignore-case
            "CUSTOM_ID" (org-element-property :key property))
 	  (org-element-property :value property)))
-   (lambda (property _) (org-element-property :begin property))
+   (lambda (property _) (org-element-begin property))
    (lambda (key) (format "Duplicate CUSTOM_ID property \"%s\"" key))))
 
 (defun org-lint-duplicate-name (ast)
@@ -395,7 +402,7 @@ called with one argument, the key used for comparison."
    org-element-all-elements
    (lambda (datum) (org-element-property :name datum))
    (lambda (datum name)
-     (goto-char (org-element-property :begin datum))
+     (goto-char (org-element-begin datum))
      (re-search-forward
       (format "^[ \t]*#\\+[A-Za-z]+:[ \t]*%s[ \t]*$" (regexp-quote name)))
      (match-beginning 0))
@@ -406,7 +413,7 @@ called with one argument, the key used for comparison."
    ast
    'target
    (lambda (target) (split-string (org-element-property :value target)))
-   (lambda (target _) (org-element-property :begin target))
+   (lambda (target _) (org-element-begin target))
    (lambda (key)
      (format "Duplicate target <<%s>>" (mapconcat #'identity key " ")))))
 
@@ -415,7 +422,7 @@ called with one argument, the key used for comparison."
    ast
    'footnote-definition
    (lambda (definition)  (org-element-property :label definition))
-   (lambda (definition _) (org-element-property :post-affiliated definition))
+   (lambda (definition _) (org-element-post-affiliated definition))
    (lambda (key) (format "Duplicate footnote definition \"%s\"" key))))
 
 (defun org-lint-orphaned-affiliated-keywords (ast)
@@ -430,7 +437,7 @@ called with one argument, the key used for comparison."
 	  (and (or (let ((case-fold-search t))
 		     (string-match-p "\\`ATTR_[-_A-Za-z0-9]+\\'" key))
 		   (member key keywords))
-	       (list (org-element-property :post-affiliated k)
+	       (list (org-element-post-affiliated k)
 		     (format "Orphaned affiliated keyword: \"%s\"" key))))))))
 
 (defun org-lint-obsolete-affiliated-keywords (_)
@@ -442,7 +449,7 @@ called with one argument, the key used for comparison."
     (while (re-search-forward regexp nil t)
       (let ((key (upcase (match-string-no-properties 1))))
 	(when (< (point)
-		 (org-element-property :post-affiliated (org-element-at-point)))
+		 (org-element-post-affiliated (org-element-at-point)))
 	  (push
 	   (list (line-beginning-position)
 		 (format
@@ -463,7 +470,7 @@ called with one argument, the key used for comparison."
 	(let ((type (org-element-property :type b)))
 	  (when (member-ignore-case type deprecated)
 	    (list
-	     (org-element-property :post-affiliated b)
+	     (org-element-post-affiliated b)
 	     (format
 	      "Deprecated syntax for export block.  Use \"BEGIN_EXPORT %s\" \
 instead"
@@ -485,14 +492,14 @@ instead"
 	     (let ((value (org-element-property :value datum)))
 	       (and (string= key "PROPERTY")
 		    (string-match deprecated-re value)
-		    (list (org-element-property :begin datum)
+		    (list (org-element-begin datum)
 			  (format "Deprecated syntax for \"%s\".  \
 Use header-args instead"
 				  (match-string-no-properties 1 value))))))
 	    (`node-property
 	     (and (member-ignore-case key deprecated-babel-properties)
 		  (list
-		   (org-element-property :begin datum)
+		   (org-element-begin datum)
 		   (format "Deprecated syntax for \"%s\".  \
 Use :header-args: instead"
 			   key))))))))))
@@ -501,14 +508,22 @@ Use :header-args: instead"
   (org-element-map ast 'src-block
     (lambda (b)
       (unless (org-element-property :language b)
-	(list (org-element-property :post-affiliated b)
+	(list (org-element-post-affiliated b)
 	      "Missing language in source block")))))
+
+(defun org-lint-suspicious-language-in-src-block (ast)
+  (org-element-map ast 'src-block
+    (lambda (b)
+      (when-let ((lang (org-element-property :language b)))
+        (unless (functionp (intern (format "org-babel-execute:%s" lang)))
+	  (list (org-element-property :post-affiliated b)
+	        (format "Unknown source block language: '%s'" lang)))))))
 
 (defun org-lint-missing-backend-in-export-block (ast)
   (org-element-map ast 'export-block
     (lambda (b)
       (unless (org-element-property :type b)
-	(list (org-element-property :post-affiliated b)
+	(list (org-element-post-affiliated b)
 	      "Missing backend in export block")))))
 
 (defun org-lint-invalid-babel-call-block (ast)
@@ -516,12 +531,12 @@ Use :header-args: instead"
     (lambda (b)
       (cond
        ((not (org-element-property :call b))
-	(list (org-element-property :post-affiliated b)
+	(list (org-element-post-affiliated b)
 	      "Invalid syntax in babel call block"))
        ((let ((h (org-element-property :end-header b)))
 	  (and h (string-match-p "\\`\\[.*\\]\\'" h)))
 	(list
-	 (org-element-property :post-affiliated b)
+	 (org-element-post-affiliated b)
 	 "Babel call's end header must not be wrapped within brackets"))))))
 
 (defun org-lint-deprecated-category-setup (ast)
@@ -531,7 +546,7 @@ Use :header-args: instead"
 	(cond
 	 ((not (string= (org-element-property :key k) "CATEGORY")) nil)
 	 (category-flag
-	  (list (org-element-property :post-affiliated k)
+	  (list (org-element-post-affiliated k)
 		"Spurious CATEGORY keyword.  Set :CATEGORY: property instead"))
 	 (t (setf category-flag t) nil))))))
 
@@ -542,7 +557,7 @@ Use :header-args: instead"
 	(let ((ref (org-element-property :path link)))
 	  (and (equal (org-element-property :type link) "coderef")
 	       (not (ignore-errors (org-export-resolve-coderef ref info)))
-	       (list (org-element-property :begin link)
+	       (list (org-element-begin link)
 		     (format "Unknown coderef \"%s\"" ref))))))))
 
 (defun org-lint-invalid-custom-id-link (ast)
@@ -551,7 +566,7 @@ Use :header-args: instead"
       (lambda (link)
 	(and (equal (org-element-property :type link) "custom-id")
 	     (not (ignore-errors (org-export-resolve-id-link link info)))
-	     (list (org-element-property :begin link)
+	     (list (org-element-begin link)
 		   (format "Unknown custom ID \"%s\""
 			   (org-element-property :path link))))))))
 
@@ -561,7 +576,7 @@ Use :header-args: instead"
       (lambda (link)
 	(and (equal (org-element-property :type link) "fuzzy")
 	     (not (ignore-errors (org-export-resolve-fuzzy-link link info)))
-	     (list (org-element-property :begin link)
+	     (list (org-element-begin link)
 		   (format "Unknown fuzzy location \"%s\""
 			   (let ((path (org-element-property :path link)))
 			     (if (string-prefix-p "*" path)
@@ -574,15 +589,39 @@ Use :header-args: instead"
       (let ((id (org-element-property :path link)))
 	(and (equal (org-element-property :type link) "id")
 	     (not (org-id-find id))
-	     (list (org-element-property :begin link)
+	     (list (org-element-begin link)
 		   (format "Unknown ID \"%s\"" id)))))))
+
+(defun org-lint-confusing-brackets (ast)
+  (org-element-map ast 'link
+    (lambda (link)
+      (org-with-wide-buffer
+       (when (eq (char-after (org-element-end link)) ?\])
+         (list (org-element-begin link)
+	       (format "Trailing ']' after link end")))))))
+
+(defun org-lint-brackets-inside-description (ast)
+  (org-element-map ast 'link
+    (lambda (link)
+      (when (org-element-contents-begin link)
+        (org-with-point-at link
+          (goto-char (org-element-contents-begin link))
+          (let ((count 0))
+            (while (re-search-forward (rx (or ?\] ?\[)) (org-element-contents-end link) t)
+              (if (equal (match-string 0) "[") (cl-incf count) (cl-decf count)))
+            (when (> count 0)
+              (list (org-element-begin link)
+	            (format "No closing ']' matches '[' in link description: %s"
+                            (buffer-substring-no-properties
+                             (org-element-contents-begin link)
+                             (org-element-contents-end link)))))))))))
 
 (defun org-lint-special-property-in-properties-drawer (ast)
   (org-element-map ast 'node-property
     (lambda (p)
       (let ((key (org-element-property :key p)))
 	(and (member-ignore-case key org-special-properties)
-	     (list (org-element-property :begin p)
+	     (list (org-element-begin p)
 		   (format
 		    "Special property \"%s\" found in a properties drawer"
 		    key)))))))
@@ -591,12 +630,12 @@ Use :header-args: instead"
   (org-element-map ast 'drawer
     (lambda (d)
       (when (equal (org-element-property :drawer-name d) "PROPERTIES")
-	(let ((headline? (org-element-lineage d '(headline)))
+	(let ((headline? (org-element-lineage d 'headline))
 	      (before
 	       (mapcar #'org-element-type
 		       (assq d (reverse (org-element-contents
-					 (org-element-property :parent d)))))))
-	  (list (org-element-property :post-affiliated d)
+					 (org-element-parent d)))))))
+	  (list (org-element-post-affiliated d)
 		(if (or (and headline? (member before '(nil (planning))))
 			(and (null headline?) (member before '(nil (comment)))))
 		    "Incorrect contents for PROPERTIES drawer"
@@ -609,7 +648,7 @@ Use :header-args: instead"
 	(let ((value (org-element-property :value p)))
 	  (and (org-string-nw-p value)
 	       (not (org-duration-p value))
-	       (list (org-element-property :begin p)
+	       (list (org-element-begin p)
 		     (format "Invalid effort duration format: %S" value))))))))
 
 (defun org-lint-link-to-local-file (ast)
@@ -621,12 +660,13 @@ Use :header-args: instead"
 	   (let* ((path (org-element-property :path l))
 		  (file (if (string= type "file")
 			    path
-                          (org-with-point-at (org-element-property :begin l)
+                          (org-with-point-at (org-element-begin l)
 			    (org-attach-expand path)))))
+             (setq file (substitute-env-in-file-name file))
 	     (and (not (file-remote-p file))
 		  (not (file-exists-p file))
-		  (list (org-element-property :begin l)
-			(format (if (org-element-lineage l '(link))
+		  (list (org-element-begin l)
+			(format (if (org-element-lineage l 'link)
 				    "Link to non-existent image file %S \
 in description"
 				  "Link to non-existent local file %S")
@@ -643,7 +683,7 @@ in description"
 	  (and (not (org-url-p file))
 	       (not (file-remote-p file))
 	       (not (file-exists-p file))
-	       (list (org-element-property :begin k)
+	       (list (org-element-begin k)
 		     (format "Non-existent setup file %S" file))))))))
 
 (defun org-lint-wrong-include-link-parameter (ast)
@@ -656,7 +696,7 @@ in description"
                      (save-match-data
                        (org-strip-quotes (match-string 1 value))))))
           (if (not path)
-              (list (org-element-property :post-affiliated k)
+              (list (org-element-post-affiliated k)
                     "Missing location argument in INCLUDE keyword")
             (let* ((file (org-string-nw-p
                           (if (string-match "::\\(.*\\)\\'" path)
@@ -668,7 +708,7 @@ in description"
                 (if (and file
                          (not (file-remote-p file))
                          (not (file-exists-p file)))
-                    (list (org-element-property :post-affiliated k)
+                    (list (org-element-post-affiliated k)
                           "Non-existent file argument in INCLUDE keyword")
                   (let* ((visiting (if file (find-buffer-visiting file)
                                      (current-buffer)))
@@ -679,7 +719,7 @@ in description"
                           (when (and search
                                      (not (ignore-errors
                                             (org-link-search search nil t))))
-                            (list (org-element-property :post-affiliated k)
+                            (list (org-element-post-affiliated k)
                                   (format
                                    "Invalid search part \"%s\" in INCLUDE keyword"
                                    search))))
@@ -698,7 +738,7 @@ in description"
 		(value (org-element-property :value k)))
 	    (when (string-match regexp value)
 	      (let ((markup (match-string-no-properties 1 value)))
-		(list (org-element-property :post-affiliated k)
+		(list (org-element-post-affiliated k)
 		      (format "Obsolete markup \"%s\" in INCLUDE keyword.  \
 Use \"export %s\" instead"
 			      markup
@@ -725,13 +765,49 @@ Use \"export %s\" instead"
 	      (setf start (match-end 0))
 	      (let ((item (match-string 1 value)))
 		(unless (member item allowed)
-		  (push (list (org-element-property :post-affiliated k)
+		  (push (list (org-element-post-affiliated k)
 			      (format "Unknown OPTIONS item \"%s\"" item))
 			reports))
                 (unless (match-string 2 value)
-                  (push (list (org-element-property :post-affiliated k)
+                  (push (list (org-element-post-affiliated k)
                               (format "Missing value for option item %S" item))
                         reports))))))))
+    reports))
+
+(defun org-lint-export-option-keywords (ast)
+  "Check for options keyword properties without EXPORT in AST."
+  (require 'ox)
+  (let (options reports common-options options-alist)
+    (dolist (opt org-export-options-alist)
+      (when (stringp (nth 1 opt))
+        (cl-pushnew (nth 1 opt) common-options :test #'equal)))
+    (dolist (backend org-export-registered-backends)
+      (dolist (opt (org-export-backend-options backend))
+        (when (stringp (nth 1 opt))
+          (cl-pushnew (or (org-export-backend-name backend) 'anonymous)
+                      (alist-get (nth 1 opt) options-alist nil nil #'equal))
+	  (cl-pushnew (nth 1 opt) options :test #'equal))))
+    (setq options-alist (nreverse options-alist))
+    (org-element-map ast 'node-property
+      (lambda (node)
+        (let ((prop (org-element-property :key node)))
+          (when (and (or (member prop options) (member prop common-options))
+                     (not (member prop org-default-properties)))
+            (push (list (org-element-post-affiliated node)
+                        (format "Potentially misspelled %sexport option \"%s\"%s.  Consider \"EXPORT_%s\"."
+                                (when (member prop common-options)
+                                  "global ")
+                                prop
+                                (if-let ((backends
+                                          (and (not (member prop common-options))
+                                               (cdr (assoc-string prop options-alist)))))
+                                    (format
+                                     " in %S export %s"
+                                     (if (= 1 (length backends)) (car backends) backends)
+                                     (if (> (length backends) 1) "backends" "backend"))
+                                  "")
+                                prop))
+                  reports)))))
     reports))
 
 (defun org-lint-invalid-macro-argument-and-template (ast)
@@ -747,7 +823,7 @@ Use \"export %s\" instead"
          (check-arity
           (lambda (arity macro)
             (let* ((name (org-element-property :key macro))
-                   (pos (org-element-property :begin macro))
+                   (pos (org-element-begin macro))
                    (args (org-element-property :args macro))
                    (l (length args)))
               (cond
@@ -782,17 +858,17 @@ Use \"export %s\" instead"
 				(org-trim (substring value (match-end 0))))))
 	    (cond
 	     ((not name)
-	      (push (list (org-element-property :post-affiliated k)
+	      (push (list (org-element-post-affiliated k)
 			  "Missing name in MACRO keyword")
 		    reports))
 	     ((not (org-string-nw-p template))
-	      (push (list (org-element-property :post-affiliated k)
+	      (push (list (org-element-post-affiliated k)
 			  "Missing template in macro \"%s\"" name)
 		    reports))
 	     (t
 	      (unless (let ((args (funcall extract-placeholders template)))
 			(equal (number-sequence 1 (or (org-last args) 0)) args))
-		(push (list (org-element-property :post-affiliated k)
+		(push (list (org-element-post-affiliated k)
 			    (format "Unused placeholders in macro \"%s\""
 				    name))
 		      reports))))))))
@@ -808,7 +884,7 @@ Use \"export %s\" instead"
 		 (template (cdr (assoc-string name templates t))))
             (pcase template
               (`nil
-               (push (list (org-element-property :begin macro)
+               (push (list (org-element-begin macro)
 			   (format "Undefined macro %S" name))
 		     reports))
               ((guard (string= name "keyword"))
@@ -833,17 +909,17 @@ Use \"export %s\" instead"
 
 (defun org-lint-undefined-footnote-reference (ast)
   (let ((definitions
-          (org-element-map ast '(footnote-definition footnote-reference)
-	    (lambda (f)
-              (and (or (eq 'footnote-definition (org-element-type f))
-                       (eq 'inline (org-element-property :type f)))
-                   (org-element-property :label f))))))
+         (org-element-map ast '(footnote-definition footnote-reference)
+	   (lambda (f)
+             (and (or (org-element-type-p f 'footnote-definition)
+                      (eq 'inline (org-element-property :type f)))
+                  (org-element-property :label f))))))
     (org-element-map ast 'footnote-reference
       (lambda (f)
 	(let ((label (org-element-property :label f)))
 	  (and (eq 'standard (org-element-property :type f))
 	       (not (member label definitions))
-	       (list (org-element-property :begin f)
+	       (list (org-element-begin f)
 		     (format "Missing definition for footnote [%s]"
 			     label))))))))
 
@@ -855,7 +931,7 @@ Use \"export %s\" instead"
 	(let ((label (org-element-property :label f)))
 	  (and label
 	       (not (member label references))
-	       (list (org-element-property :post-affiliated f)
+	       (list (org-element-post-affiliated f)
 		     (format "No reference for footnote definition [%s]"
 			     label))))))))
 
@@ -866,7 +942,7 @@ Use \"export %s\" instead"
 	(and name
 	     (string-match-p ":" name)
 	     (list (progn
-		     (goto-char (org-element-property :begin e))
+		     (goto-char (org-element-begin e))
 		     (re-search-forward
 		      (format "^[ \t]*#\\+\\w+: +%s *$" (regexp-quote name)))
 		     (match-beginning 0))
@@ -874,13 +950,42 @@ Use \"export %s\" instead"
 		    "Name \"%s\" contains a colon; Babel cannot use it as input"
 		    name)))))))
 
+(defun org-lint-mismatched-planning-repeaters (ast)
+  (org-element-map ast 'planning
+    (lambda (e)
+      (let* ((scheduled (org-element-property :scheduled e))
+             (deadline (org-element-property :deadline e))
+             (scheduled-repeater-type (org-element-property
+                                       :repeater-type scheduled))
+             (deadline-repeater-type (org-element-property
+                                      :repeater-type deadline))
+             (scheduled-repeater-value (org-element-property
+                                        :repeater-value scheduled))
+             (deadline-repeater-value (org-element-property
+                                       :repeater-value deadline)))
+        (when (and scheduled deadline
+                   (memq scheduled-repeater-type '(cumulate catch-up))
+                   (memq deadline-repeater-type '(cumulate catch-up))
+                   (> scheduled-repeater-value 0)
+                   (> deadline-repeater-value 0)
+                   (not
+                    (and
+                     (eq scheduled-repeater-type deadline-repeater-type)
+                     (eq (org-element-property :repeater-unit scheduled)
+                         (org-element-property :repeater-unit deadline))
+                     (eql scheduled-repeater-value deadline-repeater-value))))
+          (list
+           (org-element-property :begin e)
+           "Different repeaters in SCHEDULED and DEADLINE timestamps."))))))
+
 (defun org-lint-misplaced-planning-info (_)
   (let ((case-fold-search t)
 	reports)
     (while (re-search-forward org-planning-line-re nil t)
-      (unless (memq (org-element-type (org-element-at-point))
-		    '(comment-block example-block export-block planning
-				    src-block verse-block))
+      (unless (org-element-type-p
+               (org-element-at-point)
+	       '(comment-block example-block export-block planning
+			       src-block verse-block))
 	(push (list (line-beginning-position) "Misplaced planning info line")
 	      reports)))
     reports))
@@ -893,16 +998,16 @@ Use \"export %s\" instead"
 	(pcase (org-element-type element)
 	  (`drawer
 	   ;; Find drawer opening lines within non-empty drawers.
-	   (let ((end (org-element-property :contents-end element)))
+	   (let ((end (org-element-contents-end element)))
 	     (when end
 	       (while (re-search-forward org-drawer-regexp end t)
 		 (let ((n (org-trim (match-string-no-properties 0))))
 		   (push (list (line-beginning-position)
 			       (format "Possible misleading drawer entry %S" n))
 			 reports))))
-	     (goto-char (org-element-property :end element))))
+	     (goto-char (org-element-end element))))
 	  (`property-drawer
-	   (goto-char (org-element-property :end element)))
+	   (goto-char (org-element-end element)))
 	  ((or `comment-block `example-block `export-block `src-block
 	       `verse-block)
 	   nil)
@@ -916,9 +1021,10 @@ Use \"export %s\" instead"
 (defun org-lint-indented-diary-sexp (_)
   (let (reports)
     (while (re-search-forward "^[ \t]+%%(" nil t)
-      (unless (memq (org-element-type (org-element-at-point))
-		    '(comment-block diary-sexp example-block export-block
-				    src-block verse-block))
+      (unless (org-element-type-p
+               (org-element-at-point)
+	       '(comment-block diary-sexp example-block export-block
+			       src-block verse-block))
 	(push (list (line-beginning-position) "Possible indented diary-sexp")
 	      reports)))
     reports))
@@ -936,10 +1042,11 @@ Use \"export %s\" instead"
 	  (push (list (line-beginning-position)
 		      (format "Invalid block closing line \"%s\"" name))
 		reports))
-	 ((not (memq (org-element-type (org-element-at-point))
-		     '(center-block comment-block dynamic-block example-block
-				    export-block quote-block special-block
-				    src-block verse-block)))
+	 ((not (org-element-type-p
+              (org-element-at-point)
+	      '(center-block comment-block dynamic-block example-block
+			     export-block quote-block special-block
+			     src-block verse-block)))
 	  (push (list (line-beginning-position)
 		      (format "Possible incomplete block \"%s\""
 			      name))
@@ -957,7 +1064,7 @@ Use \"export %s\" instead"
 	(unless (or (string-prefix-p "BEGIN" name t)
 		    (string-prefix-p "END" name t)
 		    (save-excursion
-		      (beginning-of-line)
+		      (forward-line 0)
 		      (let ((case-fold-search t)) (looking-at exception-re))))
 	  (push (list (match-beginning 0)
 		      (format "Possible missing colon in keyword \"%s\"" name))
@@ -975,10 +1082,10 @@ Use \"export %s\" instead"
 				    property-drawer section)))
 		org-element-all-elements)
 	     (lambda (e)
-	       (not (and (eq (org-element-type e) 'headline)
-			 (org-element-property :commentedp e))))
+	       (not (and (org-element-type-p e 'headline)
+		       (org-element-property :commentedp e))))
 	     nil t '(footnote-definition property-drawer))
-	   (list (org-element-property :begin h)
+	   (list (org-element-begin h)
 		 "Extraneous elements in footnote section are not exported")))))
 
 (defun org-lint-quote-section (ast)
@@ -987,7 +1094,7 @@ Use \"export %s\" instead"
       (let ((title (org-element-property :raw-value h)))
 	(and (or (string-prefix-p "QUOTE " title)
 		 (string-prefix-p (concat org-comment-string " QUOTE ") title))
-	     (list (org-element-property :begin h)
+	     (list (org-element-begin h)
 		   "Deprecated QUOTE section"))))))
 
 (defun org-lint-file-application (ast)
@@ -995,7 +1102,7 @@ Use \"export %s\" instead"
     (lambda (l)
       (let ((app (org-element-property :application l)))
 	(and app
-	     (list (org-element-property :begin l)
+	     (list (org-element-begin l)
 		   (format "Deprecated \"file+%s\" link type" app)))))))
 
 (defun org-lint-percent-encoding-link-escape (ast)
@@ -1012,7 +1119,7 @@ Use \"export %s\" instead"
 		      (throw :obsolete nil)))
 		  (string-match-p "%" uri))))
 	  (when obsolete-flag
-	    (list (org-element-property :begin l)
+	    (list (org-element-begin l)
 		  "Link escaped with obsolete percent-encoding syntax")))))))
 
 (defun org-lint-wrong-header-argument (ast)
@@ -1034,8 +1141,8 @@ Use \"export %s\" instead"
 		       (mapcar #'car org-babel-load-languages))))))
 	      (dolist (header headers)
 		(let ((h (symbol-name (car header)))
-		      (p (or (org-element-property :post-affiliated datum)
-			     (org-element-property :begin datum))))
+		      (p (or (org-element-post-affiliated datum)
+			     (org-element-begin datum))))
 		  (cond
 		   ((not (string-prefix-p ":" h))
 		    (push
@@ -1121,8 +1228,8 @@ Use \"export %s\" instead"
             (when (not (cdr header))
               (push
 	       (list
-                (or (org-element-property :post-affiliated datum)
-		    (org-element-property :begin datum))
+                (or (org-element-post-affiliated datum)
+		    (org-element-begin datum))
 		(format "Empty value in header argument \"%s\"" (symbol-name (car header))))
 	       reports))))))
     reports))
@@ -1179,8 +1286,8 @@ Use \"export %s\" instead"
 			   ((assq group groups-alist)
 			    (push
 			     (list
-			      (or (org-element-property :post-affiliated datum)
-				  (org-element-property :begin datum))
+			      (or (org-element-post-affiliated datum)
+				  (org-element-begin datum))
 			      (format
 			       "Forbidden combination in header \"%s\": %s, %s"
 			       (car header)
@@ -1193,8 +1300,8 @@ Use \"export %s\" instead"
 			(unless valid-value
 			  (push
 			   (list
-			    (or (org-element-property :post-affiliated datum)
-				(org-element-property :begin datum))
+			    (or (org-element-post-affiliated datum)
+				(org-element-begin datum))
 			    (format "Unknown value \"%s\" for header \"%s\""
 				    v
 				    (car header)))
@@ -1205,7 +1312,7 @@ Use \"export %s\" instead"
   (org-element-map ast '(headline inlinetask)
     (lambda (h)
       (when (member "" (org-element-property :tags h))
-	(list (org-element-property :begin h)
+	(list (org-element-begin h)
 	      "Tags contain a spurious colon")))))
 
 (defun org-lint-non-existent-bibliography (ast)
@@ -1215,7 +1322,7 @@ Use \"export %s\" instead"
         (let ((file (org-strip-quotes (org-element-property :value k))))
           (and (not (file-remote-p file))
 	       (not (file-exists-p file))
-	       (list (org-element-property :begin k)
+	       (list (org-element-begin k)
 		     (format "Non-existent bibliography %S" file))))))))
 
 (defun org-lint-missing-print-bibliography (ast)
@@ -1232,7 +1339,7 @@ Use \"export %s\" instead"
     (lambda (k)
       (when (equal "CITE_EXPORT" (org-element-property :key k))
         (let ((value (org-element-property :value k))
-              (source (org-element-property :begin k)))
+              (source (org-element-begin k)))
           (if (equal value "")
               (list source "Missing export processor name")
             (condition-case _
@@ -1254,8 +1361,8 @@ Use \"export %s\" instead"
            ;; XXX: The code below signals the error at the beginning
            ;; of the paragraph containing the faulty object.  It is
            ;; not very accurate but may be enough for now.
-           (list (org-element-property :contents-begin
-                                       (org-element-property :parent text))
+           (list (org-element-contents-begin
+                                       (org-element-parent text))
                  "Possibly incomplete citation markup")))))
 
 (defun org-lint-item-number (ast)
@@ -1272,24 +1379,52 @@ Use \"export %s\" instead"
 		       (string-to-number (match-string 0 bullet)))))
                     (true-number
                      (org-list-get-item-number
-                      (org-element-property :begin item)
+                      (org-element-begin item)
                       (org-element-property :structure item)
                       (org-list-prevs-alist (org-element-property :structure item))
                       (org-list-parents-alist (org-element-property :structure item)))))
           (unless (equal bullet-number (car (last true-number)))
             (list
-             (org-element-property :begin item)
+             (org-element-begin item)
              (format "Bullet counter \"%s\" is not the same with item position %d.  Consider adding manual [@%d] counter."
                      bullet (car (last true-number)) bullet-number))))))))
 
 (defun org-lint-LaTeX-$ (ast)
-  "Report semi-obsolete $...$ LaTeX fragments."
+  "Report semi-obsolete $...$ LaTeX fragments.
+AST is the buffer parse tree."
   (org-element-map ast 'latex-fragment
     (lambda (fragment)
       (and (string-match-p "^[$][^$]" (org-element-property :value fragment))
-           (list (org-element-property :begin fragment)
+           (list (org-element-begin fragment)
                  "Potentially confusing LaTeX fragment format.  Prefer using more reliable \\(...\\)")))))
-
+(defun org-lint-LaTeX-$-ambiguous (_)
+  "Report LaTeX fragment-like text.
+AST is the buffer parse tree."
+  (org-with-wide-buffer
+   (let ((ambiguous-latex-re (rx "$." digit))
+         report context)
+     (while (re-search-forward ambiguous-latex-re nil t)
+       (setq context (org-element-context))
+       (when (or (eq 'latex-fragment (org-element-type context))
+                 (memq 'latex-fragment (org-element-restriction context)))
+         (push
+          (list
+           (point)
+           "$ symbol potentially matching LaTeX fragment boundary.  Consider using \\dollar entity.")
+          report)))
+     report)))
+(defun org-lint-timestamp-syntax (ast)
+  "Report malformed timestamps.
+AST is the buffer parse tree."
+  (org-element-map ast 'timestamp
+    (lambda (timestamp)
+      (let ((expected (org-element-interpret-data timestamp))
+            (actual (buffer-substring-no-properties
+                     (org-element-property :begin timestamp)
+                     (org-element-property :end timestamp))))
+        (unless (equal expected actual)
+          (list (org-element-property :begin timestamp)
+                (format "Potentially malformed timestamp %s.  Parsed as: %s" actual expected)))))))
 
 ;;; Checkers declaration
 
@@ -1337,6 +1472,11 @@ Use \"export %s\" instead"
   "Report missing language in source blocks"
   #'org-lint-missing-language-in-src-block
   :categories '(babel))
+
+(org-lint-add-checker 'suspicious-language-in-src-block
+  "Report suspicious language in source blocks"
+  #'org-lint-suspicious-language-in-src-block
+  :trust 'low :categories '(babel))
 
 (org-lint-add-checker 'missing-backend-in-export-block
   "Report missing backend in export blocks"
@@ -1393,6 +1533,16 @@ Use \"export %s\" instead"
   #'org-lint-invalid-id-link
   :categories '(link))
 
+(org-lint-add-checker 'trailing-bracket-after-link
+  "Report potentially confused trailing ']' after link."
+  #'org-lint-confusing-brackets
+  :categories '(link) :trust 'low)
+
+(org-lint-add-checker 'unclosed-brackets-in-link-description
+  "Report potentially confused trailing ']' after link."
+  #'org-lint-brackets-inside-description
+  :categories '(link) :trust 'low)
+
 (org-lint-add-checker 'link-to-local-file
   "Report links to non-existent local files"
   #'org-lint-link-to-local-file
@@ -1416,6 +1566,11 @@ Use \"export %s\" instead"
 (org-lint-add-checker 'unknown-options-item
   "Report unknown items in OPTIONS keyword"
   #'org-lint-unknown-options-item
+  :categories '(export) :trust 'low)
+
+(org-lint-add-checker 'misspelled-export-option
+  "Report potentially misspelled export options in properties."
+  #'org-lint-export-option-keywords
   :categories '(export) :trust 'low)
 
 (org-lint-add-checker 'invalid-macro-argument-and-template
@@ -1461,6 +1616,11 @@ Use \"export %s\" instead"
 (org-lint-add-checker 'invalid-block
   "Report invalid blocks"
   #'org-lint-invalid-block
+  :trust 'low)
+
+(org-lint-add-checker 'mismatched-planning-repeaters
+  "Report mismatched repeaters in planning info line"
+  #'org-lint-mismatched-planning-repeaters
   :trust 'low)
 
 (org-lint-add-checker 'misplaced-planning-info
@@ -1527,6 +1687,14 @@ Use \"export %s\" instead"
   "Report potentially confusing $...$ LaTeX markup."
   #'org-lint-LaTeX-$
   :categories '(markup))
+(org-lint-add-checker 'LaTeX-$
+  "Report $ that might be treated as LaTeX fragment boundary."
+  #'org-lint-LaTeX-$-ambiguous
+  :categories '(markup) :trust 'low)
+(org-lint-add-checker 'timestamp-syntax
+  "Report malformed timestamps."
+  #'org-lint-timestamp-syntax
+  :categories '(timestamp) :trust 'low)
 
 (provide 'org-lint)
 

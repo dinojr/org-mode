@@ -52,9 +52,15 @@
 (declare-function org-element-at-point "org-element" (&optional pom cached-only))
 (declare-function org-element-at-point-no-context "org-element" (&optional pom))
 (declare-function org-element-context "org-element" (&optional element))
-(declare-function org-element-lineage "org-element" (blob &optional types with-self))
-(declare-function org-element-type "org-element" (element))
-(declare-function org-element-property "org-element" (property element))
+(declare-function org-element-lineage "org-element-ast" (blob &optional types with-self))
+(declare-function org-element-type "org-element-ast" (node &optional anonymous))
+(declare-function org-element-type-p "org-element-ast" (node types))
+(declare-function org-element-property "org-element-ast" (property node))
+(declare-function org-element-begin "org-element" (node))
+(declare-function org-element-end "org-element" (node))
+(declare-function org-element-contents-begin "org-element" (node))
+(declare-function org-element-contents-end "org-element" (node))
+(declare-function org-element-post-affiliated "org-element" (node))
 (declare-function org-end-of-subtree "org" (&optional invisible-ok to-heading))
 (declare-function org-get-heading "org" (&optional no-tags no-todo no-priority no-comment))
 (declare-function org-get-tags "org" (&optional pos local))
@@ -131,6 +137,27 @@ Upper-case and lower-case letters are treated as equal.
 Unibyte strings are converted to multibyte for comparison."
     (eq t (compare-strings string1 0 nil string2 0 nil t))))
 
+(defun org-buffer-text-pixel-width ()
+  "Return pixel width of text in current buffer.
+This function uses `buffer-text-pixel-size', when available, and falls
+back to `window-text-pixel-size' otherwise."
+  (if (fboundp 'buffer-text-pixel-size)
+      (car (buffer-text-pixel-size nil nil t))
+    (if (get-buffer-window (current-buffer))
+        (car (window-text-pixel-size
+              nil (point-min) (point-max)))
+      (let ((dedicatedp (window-dedicated-p))
+            (oldbuffer (window-buffer)))
+        (unwind-protect
+            (progn
+              ;; Do not throw error in dedicated windows.
+              (set-window-dedicated-p nil nil)
+              (set-window-buffer nil (current-buffer))
+              (car (window-text-pixel-size
+                    nil (point-min) (point-max))))
+          (set-window-buffer nil oldbuffer)
+          (set-window-dedicated-p nil dedicatedp))))))
+
 
 ;;; Emacs < 28.1 compatibility
 
@@ -204,6 +231,25 @@ removed."
       (declare (debug (form form def-body)) (indent 2))
       `(progn ,@body))
   (defalias 'org-combine-change-calls 'combine-change-calls))
+
+;; `flatten-tree' was added in Emacs 27.1.
+(if (fboundp 'flatten-tree)
+    (defalias 'org--flatten-tree #'flatten-tree)
+  ;; The implementation is taken from Emacs subr.el 8664ba18c7c5.
+  (defun org--flatten-tree (tree)
+    "Return a \"flattened\" copy of TREE.
+
+A `flatten-tree' polyfill for compatibility with Emacs versions
+older than 27.1"
+    (let (elems)
+      (while (consp tree)
+        (let ((elem (pop tree)))
+          (while (consp elem)
+            (push (cdr elem) tree)
+            (setq elem (car elem)))
+          (if elem (push elem elems))))
+      (if tree (push tree elems))
+      (nreverse elems))))
 
 (if (version< emacs-version "27.1")
     (defsubst org-replace-buffer-contents (source &optional _max-secs _max-costs)
@@ -555,7 +601,7 @@ Counting starts at 1."
 (defun org-in-fixed-width-region-p ()
   "Non-nil if point in a fixed-width region."
   (save-match-data
-    (eq 'fixed-width (org-element-type (org-element-at-point)))))
+    (org-element-type-p (org-element-at-point) 'fixed-width)))
 (make-obsolete 'org-in-fixed-width-region-p
                "use `org-element' library"
                "9.0")
@@ -575,6 +621,9 @@ Counting starts at 1."
 
 (define-obsolete-function-alias 'org--math-always-on
   'org--math-p "9.7")
+
+(make-obsolete 'org-refresh-category-properties "no longer used" "9.7")
+(make-obsolete 'org-refresh-effort-properties "no longer used" "9.7")
 
 (defun org-compatible-face (inherits specs)
   "Make a compatible face specification.
@@ -622,7 +671,7 @@ See `org-link-parameters' for documentation on the other parameters."
 (defun org-table-recognize-table.el ()
   "If there is a table.el table nearby, recognize it and move into it."
   (when (org-at-table.el-p)
-    (beginning-of-line)
+    (forward-line 0)
     (unless (or (looking-at org-table-dataline-regexp)
                 (not (looking-at org-table1-hline-regexp)))
       (forward-line)
@@ -891,14 +940,14 @@ region as a drawer without further ado."
     (let ((drawer
 	   (or element
 	       (and (save-excursion
-		      (beginning-of-line)
+		      (forward-line 0)
 		      (looking-at-p "^[ \t]*:\\(\\(?:\\w\\|[-_]\\)+\\):[ \t]*$"))
 		    (org-element-at-point)))))
-      (when (memq (org-element-type drawer) '(drawer property-drawer))
-	(let ((post (org-element-property :post-affiliated drawer)))
+      (when (org-element-type-p drawer '(drawer property-drawer))
+	(let ((post (org-element-post-affiliated drawer)))
 	  (org-fold-region
 	   (save-excursion (goto-char post) (line-end-position))
-	   (save-excursion (goto-char (org-element-property :end drawer))
+	   (save-excursion (goto-char (org-element-end drawer))
 			   (skip-chars-backward " \t\n")
 			   (line-end-position))
 	   flag (if (eq org-fold-core-style 'text-properties) 'drawer 'outline))
@@ -1132,6 +1181,11 @@ context.  See the individual commands for more information."
 
 (define-obsolete-function-alias 'ob-clojure-eval-with-babashka
   #'ob-clojure-eval-with-cmd "9.7")
+
+(define-obsolete-function-alias 'org-export-get-parent
+  'org-element-parent "9.7")
+(define-obsolete-function-alias 'org-export-get-parent-element
+  'org-element-parent-element "9.7")
 
 ;;;; Obsolete link types
 
@@ -1383,7 +1437,7 @@ ELEMENT is the element at point."
        ;; Only in inline footnotes, within the definition.
        (and (eq (org-element-property :type object) 'inline)
 	    (< (save-excursion
-		 (goto-char (org-element-property :begin object))
+		 (goto-char (org-element-begin object))
 		 (search-forward ":" nil t 2))
 	       (point))))
       (otherwise t))))
@@ -1392,7 +1446,7 @@ ELEMENT is the element at point."
   "Function used for `flyspell-generic-check-word-predicate'."
   (if (org-at-heading-p)
       ;; At a headline or an inlinetask, check title only.
-      (and (save-excursion (beginning-of-line)
+      (and (save-excursion (forward-line 0)
 			   (and (let ((case-fold-search t))
 				  (not (looking-at-p "\\*+ END[ \t]*$")))
 				(let ((case-fold-search nil))
@@ -1404,19 +1458,19 @@ ELEMENT is the element at point."
            ;; Ignore checks in code, verbatim and others.
            (org--flyspell-object-check-p (org-element-at-point-no-context)))
     (let* ((element (org-element-at-point-no-context))
-	   (post-affiliated (org-element-property :post-affiliated element)))
+	   (post-affiliated (org-element-post-affiliated element)))
       (cond
        ;; Ignore checks in all affiliated keywords but captions.
        ((< (point) post-affiliated)
 	(and (save-excursion
-	       (beginning-of-line)
+	       (forward-line 0)
 	       (let ((case-fold-search t)) (looking-at "[ \t]*#\\+CAPTION:")))
 	     (> (point) (match-end 0))
 	     (org--flyspell-object-check-p element)))
        ;; Ignore checks in LOGBOOK (or equivalent) drawer.
        ((let ((log (org-log-into-drawer)))
 	  (and log
-	       (let ((drawer (org-element-lineage element '(drawer))))
+	       (let ((drawer (org-element-lineage element 'drawer)))
 		 (and drawer
 		      (org-string-equal-ignore-case
 		       log (org-element-property :drawer-name drawer))))))
@@ -1430,7 +1484,7 @@ ELEMENT is the element at point."
 		(save-excursion
 		  (end-of-line)
 		  (skip-chars-forward " \r\t\n")
-		  (< (point) (org-element-property :end element)))))
+		  (< (point) (org-element-end element)))))
 	  ;; Arbitrary list of keywords where checks are meaningful.
 	  ;; Make sure point is on the value part of the element.
 	  (keyword
@@ -1442,8 +1496,8 @@ ELEMENT is the element at point."
 	  ;; table rows (after affiliated keywords) but some objects
 	  ;; must not be affected.
 	  ((paragraph table-row verse-block)
-	   (let ((cbeg (org-element-property :contents-begin element))
-		 (cend (org-element-property :contents-end element)))
+	   (let ((cbeg (org-element-contents-begin element))
+		 (cend (org-element-contents-end element)))
 	     (and cbeg (>= (point) cbeg) (< (point) cend)
 		  (org--flyspell-object-check-p element))))))))))
 (put 'org-mode 'flyspell-mode-predicate 'org-mode-flyspell-verify)
@@ -1578,7 +1632,7 @@ key."
   "Run `org-back-to-heading' when in org-mode."
   (if (derived-mode-p 'org-mode)
       (progn
-        (beginning-of-line)
+        (forward-line 0)
         (or (org-at-heading-p (not invisible-ok))
             (let (found)
 	      (save-excursion

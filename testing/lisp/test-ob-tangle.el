@@ -99,6 +99,23 @@ echo 1
                                    (buffer-string)))
         (delete-file "test-ob-tangle.sh"))))))
 
+(ert-deftest ob-tangle/comment-org ()
+  "Test :comments org."
+  (should
+   (string-match
+    (regexp-quote ";; Function heading")
+    (org-test-with-temp-text-in-file
+        "* Function heading
+
+  #+begin_src elisp :tangle \"test-ob-tange.el\" :comments org
+    (message \"FOO\")
+  #+end_src"
+      (unwind-protect
+          (progn (org-babel-tangle)
+                 (with-temp-buffer (insert-file-contents "test-ob-tange.el")
+                                   (buffer-string)))
+        (delete-file "test-ob-tange.el"))))))
+
 (ert-deftest ob-tangle/comment-links-numbering ()
   "Test numbering of source blocks when commenting with links."
   (should
@@ -548,7 +565,133 @@ another block
 	    (should (equal (string-trim (org-element-property
 					 :value (org-element-at-point)))
 			   ";; detangle changes"))))
+      (with-current-buffer buffer
+        (set-buffer-modified-p nil))
       (kill-buffer buffer))))
+
+(ert-deftest ob-tangle/collect-blocks ()
+  "Test block collection into groups for tangling."
+  (org-test-with-temp-text-in-file "" ; filled below, it depends on temp file name
+    (let* ((org-file (buffer-file-name))
+           (test-dir (file-name-directory org-file))
+           (el-file-abs (concat (file-name-sans-extension org-file) ".el"))
+           (el-file-rel (file-name-nondirectory el-file-abs)))
+      (insert
+       (format-spec "* H1 with :tangle in properties
+:PROPERTIES:
+:header-args: :tangle relative.el
+:END:
+
+#+begin_src emacs-lisp
+\"H1: inherited :tangle relative.el in properties\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle yes
+\"H1: :tangle yes\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle no
+\"H1: should be ignored\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle %a
+\"H1: absolute org-file.lang-ext :tangle %a\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle relative.el
+\"H1: :tangle relative.el\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle ./relative.el
+\"H1: :tangle ./relative.el\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle /tmp/absolute.el
+\"H1: :tangle /tmp/absolute.el\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle ~/../../tmp/absolute.el
+\"H1: :tangle ~/../../tmp/absolute.el\"
+#+end_src
+
+* H2 without :tangle in properties
+
+#+begin_src emacs-lisp
+\"H2: without :tangle\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle yes
+\"H2: :tangle yes\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle no
+\"H2: should be ignored\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle %r
+\"H2: relative org-file.lang-ext :tangle %r\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle relative.el
+\"H2: :tangle relative.el\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle ./relative.el
+\"H2: :tangle ./relative.el\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle /tmp/absolute.el
+\"H2: :tangle /tmp/absolute.el\"
+#+end_src
+
+#+begin_src emacs-lisp :tangle ~/../../tmp/absolute.el
+\"H2: :tangle ~/../../tmp/absolute.el\"
+#+end_src"
+                    `((?a . ,el-file-abs)
+                      (?r . ,el-file-rel))))
+      ;; We check the collected blocks to tangle by counting equal
+      ;; file names in the output of
+      ;; `org-babel-tangle-collect-blocks'.
+      (letrec ((sort-fn (lambda (lst) (seq-sort-by #'car #'string-lessp lst)))
+               (normalize-expected-targets-alist
+                (lambda (blocks-per-target-alist)
+                  "Convert to absolute file names and sort expected targets."
+                  (funcall sort-fn
+                           (map-apply (lambda (file nblocks)
+                                        (cons (expand-file-name file test-dir) nblocks))
+                                      blocks-per-target-alist))))
+               (count-blocks-in-target-files
+                (lambda (collected-blocks)
+                  "Get sorted alist of target file names with number of blocks in each."
+                  (funcall sort-fn (map-apply (lambda (file blocks)
+                                                ;; Blocks are grouped by file name.
+                                                (cons file (length blocks)))
+                                              ;; From `org-babel-tangle-collect-blocks'.
+                                              collected-blocks)))))
+        (should (equal (funcall normalize-expected-targets-alist
+                                `(("/tmp/absolute.el" . 4)
+                                  ("relative.el" . 5)
+                                  ;; file name differs between tests
+                                  (,el-file-abs . 4)))
+                       (funcall count-blocks-in-target-files
+                                (org-babel-tangle-collect-blocks))))
+        ;; Simulate TARGET-FILE to test as `org-babel-tangle' and
+        ;; `org-babel-load-file' would call
+        ;; `org-babel-tangle-collect-blocks'.
+        (let ((org-babel-default-header-args
+               (org-babel-merge-params
+                org-babel-default-header-args
+                (list (cons :tangle el-file-abs)))))
+          (should (equal
+                   (funcall normalize-expected-targets-alist
+                            `(("/tmp/absolute.el" . 4)
+                              ("relative.el" . 5)
+                              ;; Default :tangle header now also
+                              ;; points to the file name derived from the name of
+                              ;; the Org file, so 5 blocks should go there.
+                              (,el-file-abs . 5)))
+                   (funcall count-blocks-in-target-files
+                            (org-babel-tangle-collect-blocks)))))))))
 
 (provide 'test-ob-tangle)
 

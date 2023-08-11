@@ -188,7 +188,7 @@ For a better experience, the three Org commands ~org-store-link~,
 Emacs, not just in Org buffers.  To that effect, you need to bind them
 to globally available keys, like the ones reserved for users (see
 [[info:elisp::Key Binding Conventions]]).  Here are suggested bindings,
-please modify the keys to your own liking.
+please modify the keys to your own liking in your [[info:emacs#Init File][personal init file]].
 
 #+begin_src emacs-lisp
 (global-set-key (kbd "C-c l") #'org-store-link)
@@ -508,7 +508,7 @@ as a title for your own headings.
 
 Some people find the many stars too noisy and would prefer an outline
 that has whitespace followed by a single star as headline starters.
-This can be achieved using a Org Indent minor mode.  See [[*A Cleaner
+This can be achieved using an Org Indent minor mode.  See [[*A Cleaner
 Outline View]] for more information.
 
 Headlines are not numbered.  However, you may want to dynamically
@@ -4648,7 +4648,7 @@ all children are done, you can use the following setup:
 #+begin_src emacs-lisp
 (defun org-summary-todo (n-done n-not-done)
   "Switch entry to DONE when all subentries are done, to TODO otherwise."
-  (let (org-log-done org-log-states)   ; turn off logging
+  (let (org-log-done org-todo-log-states)   ; turn off logging
     (org-todo (if (= n-not-done 0) "DONE" "TODO"))))
 
 (add-hook 'org-after-todo-statistics-hook #'org-summary-todo)
@@ -5987,6 +5987,11 @@ a little confusing because timestamp is often used as indicating when
 something was created or last changed.  However, in Org mode this term
 is used in a much wider sense.
 
+Timestamps can be used to plan appointments, schedule tasks, set
+deadlines, track time, and more.  The following sections describe
+the timestamp format and tooling that Org mode provides for common
+use cases dealing with time and time intervals.
+
 ** Timestamps
 :PROPERTIES:
 :DESCRIPTION: Assigning a time to a tree entry.
@@ -5997,12 +6002,12 @@ is used in a much wider sense.
 #+cindex: deadlines
 #+cindex: scheduling
 
-A timestamp is a specification of a date (possibly with a time) in a
-special format, either =<2003-09-16 Tue>= or
-=<2003-09-16 Tue 09:39>=[fn:19].  A timestamp can appear anywhere in
-the headline or body of an Org tree entry.  Its presence causes
-entries to be shown on specific dates in the agenda (see [[*Weekly/daily
-agenda]]).  We distinguish:
+A timestamp is a specification of a date---possibly with a time or
+time range---in a special format, either =<2003-09-16 Tue>= or
+=<2003-09-16 Tue 09:39>= or =<2003-09-16 Tue 12:00-12:30>=[fn:19].
+A timestamp can appear anywhere in the headline or body of an Org tree
+entry.  Its presence causes entries to be shown on specific dates in
+the agenda (see [[*Weekly/daily agenda]]).  We distinguish:
 
 - Plain timestamp; Event; Appointment ::
 
@@ -6011,13 +6016,17 @@ agenda]]).  We distinguish:
   A simple timestamp just assigns a date/time to an item.  This is
   just like writing down an appointment or event in a paper agenda.
   In the agenda display, the headline of an entry associated with
-  a plain timestamp is shown exactly on that date.
+  a plain timestamp is shown exactly on that date.  There can be
+  multiple timestamps in an item.
 
   #+begin_example
   ,* Meet Peter at the movies
     <2006-11-01 Wed 19:15>
   ,* Discussion on climate change
-    <2006-11-02 Thu>
+    <2006-11-02 Thu 10:00-12:00>
+  ,* My days off
+    <2006-11-03 Fri>
+    <2006-11-06 Mon>
   #+end_example
 
 - Timestamp with repeater interval ::
@@ -6053,24 +6062,32 @@ agenda]]).  We distinguish:
     <%%(diary-float t 4 2)>
   #+end_example
 
+- Time range ::
+  #+cindex: time range
+
+  Time range is a timestamp having two time units connected by =-=
+
+  #+begin_example
+,* Discussion on climate change
+   <2006-11-02 Thu 10:00-12:00>
+  #+end_example
+
 - Time/Date range ::
 
+  #+cindex: time range
   #+cindex: timerange
   #+cindex: date range
   Two timestamps connected by =--= denote a range.  In the agenda, the
   headline is shown on the first and last day of the range, and on any
-  dates that are displayed and fall in the range.  Here is an example:
+  dates that are displayed and fall in the range.  The first example
+  specifies just the dates of the range while the second example
+  specifies a time range for each date.
 
   #+begin_example
   ,** Meeting in Amsterdam
      <2004-08-23 Mon>--<2004-08-26 Thu>
-  #+end_example
-
-  Timerange is a timestamp consisting of two time units connected by =-=
-
-  #+begin_example
-  ,* Discussion on climate change
-     <2006-11-02 Thu 10:00-12:00>
+  ,** This weeks committee meetings
+     <2004-08-23 Mon 10:00-11:00>--<2004-08-26 Thu 10:00-11:00>
   #+end_example
 
 - Inactive timestamp ::
@@ -7929,6 +7946,10 @@ Now lets look at the elements of a template definition.  Each entry in
 
     File to the entry that is currently being clocked.
 
+  - =(here)= ::
+
+    The position of =point=.
+
   - =(function function-finding-location)= ::
 
     Most general way: write your own function which both visits the
@@ -9225,16 +9246,18 @@ When matching properties, a number of different operators can be used
 to test the value of a property.  Here is a complex example:
 
 #+begin_example
-+work-boss+PRIORITY="A"+Coffee="unlimited"+Effort<2
++work-boss+PRIORITY="A"+Coffee="unlimited"+Effort<*2
          +With={Sarah\|Denny}+SCHEDULED>="<2008-10-11>"
 #+end_example
 
+#+cindex: operator, for property search
 #+texinfo: @noindent
 The type of comparison depends on how the comparison value is written:
 
 - If the comparison value is a plain number, a numerical comparison is
   done, and the allowed operators are =<=, ===, =>=, =<==, =>==, and
-  =<>=.
+  =<>=.  As a synonym for the equality operator ===, there is also
+  ====; =!== and =/== are synonyms of the inequality operator =<>=.
 
 - If the comparison value is enclosed in double-quotes, a string
   comparison is done, and the same operators are allowed.
@@ -9252,12 +9275,41 @@ The type of comparison depends on how the comparison value is written:
   is performed, with === meaning that the regexp matches the property
   value, and =<>= meaning that it does not match.
 
+- All operators may be optionally followed by an asterisk =*=, like in
+  =<*=, =!=*=, etc.  Such /starred operators/ work like their regular,
+  unstarred counterparts except that they match only headlines where
+  the tested property is actually present.  This is most useful for
+  search terms that logically exclude results, like the inequality
+  operator.
+
 So the search string in the example finds entries tagged =work= but
 not =boss=, which also have a priority value =A=, a =Coffee= property
 with the value =unlimited=, an =EFFORT= property that is numerically
 smaller than 2, a =With= property that is matched by the regular
 expression =Sarah\|Denny=, and that are scheduled on or after October
 11, 2008.
+
+Note that the test on the =EFFORT= property uses operator =<*=, so
+that the search result will include only entries that actually have an
+=EFFORT= property defined and with numerical value smaller than 2.
+With the regular =<= operator, the search would handle entries without
+an =EFFORT= property as having a zero effort and would include them in
+the result as well.
+
+Currently, you can use only property names including alphanumeric
+characters, underscores, and minus characters in search strings.  In
+addition, if you want to search for a property whose name starts with
+a minus character, you have to "quote" that leading minus character
+with an explicit positive selection plus character, like this:
+
+#+begin_example
++-long-and-twisted-property-name-="foo"
+#+end_example
+
+#+texinfo: @noindent
+Without that extra plus character, the minus character would be taken
+to indicate a negative selection on search term
+=long-and-twisted-property-name-​="foo"=.
 
 You can configure Org mode to use property inheritance during
 a search, but beware that this can slow down searches considerably.
@@ -11091,7 +11143,9 @@ exported verbatim.
 #+vindex: org-fontify-emphasized-text
 To turn off fontification for marked up text, you can set
 ~org-fontify-emphasized-text~ to ~nil~.  To narrow down the list of
-available markup syntax, you can customize ~org-emphasis-alist~.
+the fontified markup syntax, you can customize
+~org-emphasis-alist~[fn:: The markup will still be recognized.  Just
+not highlighted visually in Emacs.].
 
 #+vindex: org-hide-emphasis-markers
 To hide the emphasis markup characters in your buffers, set
@@ -11253,13 +11307,18 @@ snippets are identified as LaTeX source code:
   between, and if the closing =$= is followed by whitespace or
   punctuation (but not a dash).
 
+  Sometimes, it may necessary to have a literal dollar symbol even
+  when it is recognized as LaTeX math delimiter.  Org provides =\dollar= and
+  =\USD= entities (see [[*Special Symbols]]) that are rendered as =$= for
+  such scenarios.  Also, see [[*Escape Character]].
+
 #+texinfo: @noindent
 For example:
 
 #+begin_example
 \begin{equation}                        % arbitrary environments,
-x=\sqrt{b}                              % even tables, figures
-\end{equation}                          % etc
+x=\sqrt{b}                              % even tables, figures, etc
+\end{equation}
 
 If $a^2=b$ and \( b=2 \), then the solution must be
 either $$ a=+\sqrt{2} $$ or \[ a=-\sqrt{2} \].
@@ -11452,7 +11511,7 @@ see [[*Structure Templates]] for shortcuts to easily insert code blocks.
   (defun org-xor (a b)
     "Exclusive or."
     (if a (not b) b))
- ,#+END_SRC
+,#+END_SRC
 #+end_example
 
 Both in =example= and in =src= snippets, you can add a =-n= switch to
@@ -11597,8 +11656,8 @@ command:
   =ORG-IMAGE-ACTUAL-WIDTH= property (subtree-level)[fn:: The width can
   be customized in Emacs >= 24.1, built with imagemagick support.].
   Their value can be the following:
-  - (default) Non-nil, use the actual width of images when inlining them.
-    If the actual width is too wide, limit it according to
+  - (default) Non-~nil~, use the actual width of images when inlining
+    them.  If the actual width is too wide, limit it according to
     ~org-image-max-width~.
   - When set to a number, use imagemagick (when available) to set the
     image's width to this value.
@@ -11608,7 +11667,7 @@ command:
     ,#+ATTR_HTML: :width 300px
     #+end_example
     and fall back on that number if none is found.
-  - When set to nil, try to get the width from an =#+ATTR.*= keyword
+  - When set to ~nil~, try to get the width from an =#+ATTR.*= keyword
     and fall back on the original width or ~org-image-max-width~ if
     none is found.
 
@@ -11618,8 +11677,8 @@ command:
   - (default) ~fill-column~, limit width to ~fill-column~ number of
     characters.
   - ~window~, limit width to current window width.
-  - integer number, limit width that specified number of pixels.
-  - nil, do not limit the width.
+  - integer number, limit width to that specified number of pixels.
+  - ~nil~, do not limit the width.
 
 #+vindex: org-cycle-inline-images-display
 Inline images can also be displayed when cycling the folding state.
@@ -11675,7 +11734,7 @@ text.  Markers always start with =fn:=.  For example:
 #+begin_example
 The Org website[fn:1] now looks a lot better than it used to.
 ...
-[fn:55] The link is: https://orgmode.org
+[fn:49] The link is: https://orgmode.org
 #+end_example
 
 Org mode extends the number-based syntax to /named/ footnotes and
@@ -11859,6 +11918,24 @@ further alter what is exported, and how.
   in the export.  Affects only those backend formats that have
   sections like =<head>...</head>= in HTML.
 
+  #+vindex: org-export-body-only
+  To make body-only export the default, customize the variable
+  ~org-export-body-only~.
+
+- {{{kbd(C-f)}}} ::
+  #+kindex: C-c C-e C-f
+
+  Toggle force-publishing export.  Publish functions normally only
+  publish changed files (see [[**Triggering Publication]]).  Forced
+  publishing causes files to be published even if their timestamps do
+  not indicate the file has been changed.
+
+  #+vindex: org-export-force-publishing
+  To make forced publishing the default, customize the variable
+  ~org-export-force-publishing~.  (This is similar to
+  ~org-publish-use-timestamps-flag~, but only affects the export
+  dispatcher.)
+
 - {{{kbd(C-s)}}} ::
   #+kindex: C-c C-e C-s
 
@@ -11879,6 +11956,10 @@ further alter what is exported, and how.
   Toggle visible-only export.  This is useful for exporting only
   certain parts of an Org document by adjusting the visibility of
   particular headings.  See also [[*Sparse Trees]].
+
+  #+vindex: org-export-visible-only
+  To make visible-only export the default, customize the variable
+  ~org-export-visible-only~.
 
 ** Export Settings
 :PROPERTIES:
@@ -12038,6 +12119,12 @@ following arguments.
   #+vindex: org-export-with-author
   Toggle inclusion of author name into exported file
   (~org-export-with-author~).
+
+- ~expand-links~ ::
+
+  #+vindex: org-export-expand-links
+  Toggle expansion of environment variables in file paths
+  (~org-export-expand-links~).
 
 - ~broken-links~ ::
 
@@ -13170,6 +13257,32 @@ a postamble from looking up author's name, email address, creator's
 name, and date.
 
 
+*** Exporting to minimal HTML
+:PROPERTIES:
+:DESCRIPTION: Exporting HTML without CSS, Javascript, etc.
+:ALT_TITLE: Bare HTML
+:END:
+
+If you want to output a minimal HTML file, with no CSS, no Javascript,
+no preamble or postamble, here are the variable you would need to set:
+
+#+vindex: org-html-head
+#+vindex: org-html-head-extra
+#+vindex: org-html-head-include-default-style
+#+vindex: org-html-head-include-scripts
+#+vindex: org-html-preamble
+#+vindex: org-html-postamble
+#+vindex: org-html-use-infojs
+#+begin_src emacs-lisp
+(setq org-html-head ""
+      org-html-head-extra ""
+      org-html-head-include-default-style nil
+      org-html-head-include-scripts nil
+      org-html-preamble nil
+      org-html-postamble nil
+      org-html-use-infojs nil)
+#+end_src
+
 *** Quoting HTML tags
 :PROPERTIES:
 :DESCRIPTION: Using direct HTML in Org files.
@@ -13623,6 +13736,13 @@ An important note about the LaTeX export backend: it is sensitive to
 blank lines in the Org document.  That's because LaTeX itself depends
 on blank lines to tell apart syntactical elements, such as paragraphs.
 
+The following sections expect users to be familiar with common LaTeX
+terminology.  You may refer to https://tug.org/begin.html to get
+familiar with LaTeX basics.  Users with LaTeX installed may also run
+=texdoc latex= from terminal to open LaTeX introduction [fn:: The
+command will open a PDF file, which is also available for download
+from http://mirrors.ctan.org/info/latex-doc-ptr/latex-doc-ptr.pdf]
+
 *** LaTeX/PDF export commands
 :PROPERTIES:
 :DESCRIPTION: For producing @LaTeX{} and PDF documents.
@@ -13899,9 +14019,10 @@ This would produce in LaTeX (with the actual =polyglossia= syntax):
 :DESCRIPTION: Incorporating literal @LaTeX{} code.
 :END:
 
-The LaTeX export backend can insert any arbitrary LaTeX code, see
-[[*Embedded LaTeX]].  There are three ways to embed such code in the Org
-file and they all use different quoting syntax.
+When the available LaTeX export customizations are not sufficient to
+fine-tune the desired output, it is possible to insert any arbitrary
+LaTeX code (see [[*Embedded LaTeX]]).  There are three ways to embed such
+code in the Org file and they all use different quoting syntax.
 
 #+cindex: inline, in @LaTeX{} export
 Inserting in-line quoted with @ symbols:
@@ -14180,6 +14301,15 @@ four:
 :END:
 #+cindex: source blocks, in @LaTeX{} export
 #+cindex: @samp{ATTR_LATEX}, keyword
+
+#+vindex: org-latex-src-block-backend
+LaTeX export backend provides multiple ways to render src blocks in
+LaTeX, according to the value of ~org-latex-src-block-backend~.  The
+default value =verbatim= renders the src code verbatim, without any
+extra styling.  Alternative values allow more colorful styling, but
+require additional LaTeX (=listings=, =minted=), system (=minted=), or
+Emacs (=engraved=) packages.  See the ~org-latex-src-block-backend~
+docstring for more details.
 
 The LaTeX export backend can make source code blocks into floating
 objects through the attributes =:float= and =:options=.  For =:float=:
@@ -15734,9 +15864,9 @@ This is the common text for variables foo and bar.
 
 The =:compact= attribute is an alternative to the =:sep= attribute,
 which allows writing each entry on its own line.  If this attribute is
-non-nil and an item in a description list has no body but is followed
-by another item, then the second item is transcoded to =@itemx=.  This
-example is transcoded to the same output as above.
+non-~nil~ and an item in a description list has no body but is
+followed by another item, then the second item is transcoded to
+=@itemx=.  This example is transcoded to the same output as above.
 
 #+begin_example
 ,#+ATTR_TEXINFO: :table-type vtable :indic asis :compact t
@@ -15754,7 +15884,7 @@ Texinfo definition commands (see [[info:texinfo::Definition Commands]]).
 One of them uses description lists and is described below, the other
 relies on special blocks (see [[*Special blocks in Texinfo export]]).
 
-Items in a description list in a Org file that begin with =Function:=
+Items in a description list in an Org file that begin with =Function:=
 or certain other prefixes are converted using Texinfo definition
 commands.  This works even if other items in the same list do not have
 such a prefix; if necessary a single description list is converted
@@ -16020,17 +16150,28 @@ easily export to or import from external applications.  The iCalendar
 export backend takes calendar data from Org files and exports to the
 standard iCalendar format.
 
+#+vindex: icalendar-export-sexp-enumeration-days
+By default, iCalendar export only includes headings that contain
+active timestamps or diary sexps[fn:: Diary sexp events, except
+certain built-in types (see ~icalendar-export-sexp-enumerate-all~),
+are exported up to ~icalendar-export-sexp-enumeration-days~ into
+future.].
+
 #+vindex: org-icalendar-include-todo
-#+vindex: org-icalendar-use-deadline
-#+vindex: org-icalendar-use-scheduled
 The iCalendar export backend can also incorporate TODO entries based
 on the configuration of the ~org-icalendar-include-todo~ variable.
 The backend exports plain timestamps as =VEVENT=, TODO items as
 =VTODO=, and also create events from deadlines that are in non-TODO
-items.  The backend uses the deadlines and scheduling dates in Org
-TODO items for setting the start and due dates for the iCalendar TODO
-entry.  Consult the ~org-icalendar-use-deadline~ and
-~org-icalendar-use-scheduled~ variables for more details.
+items.
+
+#+vindex: org-icalendar-use-deadline
+#+vindex: org-icalendar-use-scheduled
+#+vindex: org-icalendar-todo-unscheduled-start
+The backend uses the deadlines and scheduling dates in Org TODO items
+for setting the start and due dates for the iCalendar TODO entry.
+Consult the ~org-icalendar-use-deadline~,
+~org-icalendar-use-scheduled~, and
+~org-icalendar-todo-unscheduled-start~ variables for more details.
 
 #+vindex: org-icalendar-categories
 #+vindex: org-icalendar-alarm-time
@@ -16164,7 +16305,12 @@ can remove every headline in the buffer during export like this:
   "Remove all headlines in the current buffer.
 BACKEND is the export backend being used, as a symbol."
   (org-map-entries
-   (lambda () (delete-region (point) (line-beginning-position 2)))))
+   (lambda ()
+     (delete-region (point) (line-beginning-position 2))
+     ;; We need to tell `org-map-entries' to not skip over heading at
+     ;; point. Otherwise, it would continue from _next_ heading. See
+     ;; the docstring of `org-map-entries' for details.
+     (setq org-map-continue-from (point)))))
 
 (add-hook 'org-export-before-parsing-hook #'my-headline-removal)
 #+end_src
@@ -16306,76 +16452,55 @@ Further steps to consider would be an interactive function,
 self-installing an item in the export dispatcher menu, and other
 user-friendly improvements.
 
-** Export in Foreign Buffers
+** Export Region
 :PROPERTIES:
 :DESCRIPTION: Author tables and lists in Org syntax.
 :END:
 
-The export backends in Org often include commands to convert selected
-regions.  A convenient feature of this in-place conversion is that the
-exported output replaces the original source.  Here are such
-functions:
+Some export backends include commands to convert a region of Org
+formatted text to another format, such as HTML or LaTeX.  The
+conversion replaces the original source.  Here are such commands:
 
-- ~org-ascii-convert-region-to-ascii~ ::
+- ~org-export-region-to-ascii~ ::
 
   #+findex: org-ascii-convert-region-to-ascii
+  #+findex: org-export-region-to-ascii
   Convert the selected region into ASCII.
 
-- ~org-ascii-convert-region-to-utf8~ ::
+- ~org-export-region-to-utf8~ ::
 
   #+findex: org-ascii-convert-region-to-utf8
+  #+findex: org-export-region-to-utf8
   Convert the selected region into UTF-8.
 
-- ~org-html-convert-region-to-html~ ::
+- ~org-export-region-to-html~ ::
 
   #+findex: org-html-convert-region-to-html
+  #+findex: org-export-region-to-html
   Convert the selected region into HTML.
 
-- ~org-latex-convert-region-to-latex~ ::
+- ~org-export-region-to-latex~ ::
 
   #+findex: org-latex-convert-region-to-latex
+  #+findex: org-export-region-to-latex
   Convert the selected region into LaTeX.
 
-- ~org-texinfo-convert-region-to-texinfo~ ::
+- ~org-export-region-to-texinfo~ ::
 
   #+findex: org-texinfo-convert-region-to-texinfo
+  #+findex: org-export-region-to-texinfo
   Convert the selected region into Texinfo.
 
-- ~org-md-convert-region-to-md~ ::
+- ~org-export-region-to-md~ ::
 
   #+findex: org-md-convert-region-to-md
+  #+findex: org-export-region-to-md
   Convert the selected region into Markdown.
 
-In-place conversions are particularly handy for quick conversion of
-tables and lists in foreign buffers.  For example, in an HTML buffer,
+The in-place conversion is particularly handy for quick conversion of
+tables and lists in non-Org buffers.  For example, in an HTML buffer,
 write a list in Org syntax, select it, and convert it to HTML with
 {{{kbd(M-x org-html-convert-region-to-html)}}}.
-
-*** Exporting to minimal HTML
-:PROPERTIES:
-:DESCRIPTION: Exporting HTML without CSS, Javascript, etc.
-:ALT_TITLE: Bare HTML
-:END:
-
-If you want to output a minimal HTML file, with no CSS, no Javascript,
-no preamble or postamble, here are the variable you would need to set:
-
-#+vindex: org-html-head
-#+vindex: org-html-head-extra
-#+vindex: org-html-head-include-default-style
-#+vindex: org-html-head-include-scripts
-#+vindex: org-html-preamble
-#+vindex: org-html-postamble
-#+vindex: org-html-use-infojs
-#+begin_src emacs-lisp
-(setq org-html-head ""
-      org-html-head-extra ""
-      org-html-head-include-default-style nil
-      org-html-head-include-scripts nil
-      org-html-preamble nil
-      org-html-postamble nil
-      org-html-use-infojs nil)
-#+end_src
 
 * Publishing
 :PROPERTIES:
@@ -16571,228 +16696,107 @@ Settings]]), however, override everything.
 :UNNUMBERED: notoc
 :END:
 
-| ~:archived-trees~       | ~org-export-with-archived-trees~   |
-| ~:exclude-tags~         | ~org-export-exclude-tags~          |
-| ~:headline-levels~      | ~org-export-headline-levels~       |
-| ~:language~             | ~org-export-default-language~      |
-| ~:preserve-breaks~      | ~org-export-preserve-breaks~       |
-| ~:section-numbers~      | ~org-export-with-section-numbers~  |
-| ~:select-tags~          | ~org-export-select-tags~           |
-| ~:with-author~          | ~org-export-with-author~           |
-| ~:with-broken-links~    | ~org-export-with-broken-links~     |
-| ~:with-clocks~          | ~org-export-with-clocks~           |
-| ~:with-creator~         | ~org-export-with-creator~          |
-| ~:with-date~            | ~org-export-with-date~             |
-| ~:with-drawers~         | ~org-export-with-drawers~          |
-| ~:with-email~           | ~org-export-with-email~            |
-| ~:with-emphasize~       | ~org-export-with-emphasize~        |
-| ~:with-fixed-width~     | ~org-export-with-fixed-width~      |
-| ~:with-footnotes~       | ~org-export-with-footnotes~        |
-| ~:with-latex~           | ~org-export-with-latex~            |
-| ~:with-planning~        | ~org-export-with-planning~         |
-| ~:with-priority~        | ~org-export-with-priority~         |
-| ~:with-properties~      | ~org-export-with-properties~       |
-| ~:with-special-strings~ | ~org-export-with-special-strings~  |
-| ~:with-sub-superscript~ | ~org-export-with-sub-superscripts~ |
-| ~:with-tables~          | ~org-export-with-tables~           |
-| ~:with-tags~            | ~org-export-with-tags~             |
-| ~:with-tasks~           | ~org-export-with-tasks~            |
-| ~:with-timestamps~      | ~org-export-with-timestamps~       |
-| ~:with-title~           | ~org-export-with-title~            |
-| ~:with-toc~             | ~org-export-with-toc~              |
-| ~:with-todo-keywords~   | ~org-export-with-todo-keywords~    |
+#+NAME: org-manual-get-export-props-customizations
+#+begin_src emacs-lisp :exports none :results table
+(require 'ox)
+(let (result)
+  (dolist (spec alist)
+    (when (and (nth 3 spec) (symbolp (nth 3 spec))) ; has customization
+      (push (list (format "~%s~" (car spec)) (format "~%s~" (nth 3 spec))) result)))
+  (nreverse result))
+#+end_src
+
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox)
+(let ((alist org-export-options-alist))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
+
 
 **** ASCII specific properties
 :PROPERTIES:
 :UNNUMBERED: notoc
 :END:
 
-| ~:ascii-bullets~                       | ~org-ascii-bullets~                       |
-| ~:ascii-caption-above~                 | ~org-ascii-caption-above~                 |
-| ~:ascii-charset~                       | ~org-ascii-charset~                       |
-| ~:ascii-global-margin~                 | ~org-ascii-global-margin~                 |
-| ~:ascii-format-drawer-function~        | ~org-ascii-format-drawer-function~        |
-| ~:ascii-format-inlinetask-function~    | ~org-ascii-format-inlinetask-function~    |
-| ~:ascii-headline-spacing~              | ~org-ascii-headline-spacing~              |
-| ~:ascii-indented-line-width~           | ~org-ascii-indented-line-width~           |
-| ~:ascii-inlinetask-width~              | ~org-ascii-inlinetask-width~              |
-| ~:ascii-inner-margin~                  | ~org-ascii-inner-margin~                  |
-| ~:ascii-links-to-notes~                | ~org-ascii-links-to-notes~                |
-| ~:ascii-list-margin~                   | ~org-ascii-list-margin~                   |
-| ~:ascii-paragraph-spacing~             | ~org-ascii-paragraph-spacing~             |
-| ~:ascii-quote-margin~                  | ~org-ascii-quote-margin~                  |
-| ~:ascii-table-keep-all-vertical-lines~ | ~org-ascii-table-keep-all-vertical-lines~ |
-| ~:ascii-table-use-ascii-art~           | ~org-ascii-table-use-ascii-art~           |
-| ~:ascii-table-widen-columns~           | ~org-ascii-table-widen-columns~           |
-| ~:ascii-text-width~                    | ~org-ascii-text-width~                    |
-| ~:ascii-underline~                     | ~org-ascii-underline~                     |
-| ~:ascii-verbatim-format~               | ~org-ascii-verbatim-format~               |
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox-ascii)
+(let ((alist (org-export-backend-options (org-export-get-backend 'ascii))))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
 
 **** Beamer specific properties
 :PROPERTIES:
 :UNNUMBERED: notoc
 :END:
 
-| ~:beamer-theme~                 | ~org-beamer-theme~                 |
-| ~:beamer-column-view-format~    | ~org-beamer-column-view-format~    |
-| ~:beamer-environments-extra~    | ~org-beamer-environments-extra~    |
-| ~:beamer-frame-default-options~ | ~org-beamer-frame-default-options~ |
-| ~:beamer-outline-frame-options~ | ~org-beamer-outline-frame-options~ |
-| ~:beamer-outline-frame-title~   | ~org-beamer-outline-frame-title~   |
-| ~:beamer-subtitle-format~       | ~org-beamer-subtitle-format~       |
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox-beamer)
+(let ((alist (org-export-backend-options (org-export-get-backend 'beamer))))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
 
 **** HTML specific properties
 :PROPERTIES:
 :UNNUMBERED: notoc
 :END:
 
-| ~:html-allow-name-attribute-in-anchors~        | ~org-html-allow-name-attribute-in-anchors~        |
-| ~:html-checkbox-type~                          | ~org-html-checkbox-type~                          |
-| ~:html-container~                              | ~org-html-container-element~                      |
-| ~:html-divs~                                   | ~org-html-divs~                                   |
-| ~:html-doctype~                                | ~org-html-doctype~                                |
-| ~:html-extension~                              | ~org-html-extension~                              |
-| ~:html-footnote-format~                        | ~org-html-footnote-format~                        |
-| ~:html-footnote-separator~                     | ~org-html-footnote-separator~                     |
-| ~:html-footnotes-section~                      | ~org-html-footnotes-section~                      |
-| ~:html-format-drawer-function~                 | ~org-html-format-drawer-function~                 |
-| ~:html-format-headline-function~               | ~org-html-format-headline-function~               |
-| ~:html-format-inlinetask-function~             | ~org-html-format-inlinetask-function~             |
-| ~:html-head-extra~                             | ~org-html-head-extra~                             |
-| ~:html-head-include-default-style~             | ~org-html-head-include-default-style~             |
-| ~:html-head-include-scripts~                   | ~org-html-head-include-scripts~                   |
-| ~:html-head~                                   | ~org-html-head~                                   |
-| ~:html-home/up-format~                         | ~org-html-home/up-format~                         |
-| ~:html-html5-fancy~                            | ~org-html-html5-fancy~                            |
-| ~:html-indent~                                 | ~org-html-indent~                                 |
-| ~:html-infojs-options~                         | ~org-html-infojs-options~                         |
-| ~:html-infojs-template~                        | ~org-html-infojs-template~                        |
-| ~:html-inline-image-rules~                     | ~org-html-inline-image-rules~                     |
-| ~:html-inline-images~                          | ~org-html-inline-images~                          |
-| ~:html-link-home~                              | ~org-html-link-home~                              |
-| ~:html-link-org-files-as-html~                 | ~org-html-link-org-files-as-html~                 |
-| ~:html-link-up~                                | ~org-html-link-up~                                |
-| ~:html-link-use-abs-url~                       | ~org-html-link-use-abs-url~                       |
-| ~:html-mathjax-options~                        | ~org-html-mathjax-options~                        |
-| ~:html-mathjax-template~                       | ~org-html-mathjax-template~                       |
-| ~:html-equation-reference-format~              | ~org-html-equation-reference-format~              |
-| ~:html-metadata-timestamp-format~              | ~org-html-metadata-timestamp-format~              |
-| ~:html-postamble-format~                       | ~org-html-postamble-format~                       |
-| ~:html-postamble~                              | ~org-html-postamble~                              |
-| ~:html-preamble-format~                        | ~org-html-preamble-format~                        |
-| ~:html-preamble~                               | ~org-html-preamble~                               |
-| ~:html-self-link-headlines~                    | ~org-html-self-link-headlines~                    |
-| ~:html-table-align-individual-field~           | ~org-html-table-align-individual-fields~          |
-| ~:html-table-attributes~                       | ~org-html-table-default-attributes~               |
-| ~:html-table-caption-above~                    | ~org-html-table-caption-above~                    |
-| ~:html-table-data-tags~                        | ~org-html-table-data-tags~                        |
-| ~:html-table-header-tags~                      | ~org-html-table-header-tags~                      |
-| ~:html-table-row-tags~                         | ~org-html-table-row-tags~                         |
-| ~:html-table-use-header-tags-for-first-column~ | ~org-html-table-use-header-tags-for-first-column~ |
-| ~:html-tag-class-prefix~                       | ~org-html-tag-class-prefix~                       |
-| ~:html-text-markup-alist~                      | ~org-html-text-markup-alist~                      |
-| ~:html-todo-kwd-class-prefix~                  | ~org-html-todo-kwd-class-prefix~                  |
-| ~:html-toplevel-hlevel~                        | ~org-html-toplevel-hlevel~                        |
-| ~:html-use-infojs~                             | ~org-html-use-infojs~                             |
-| ~:html-validation-link~                        | ~org-html-validation-link~                        |
-| ~:html-viewport~                               | ~org-html-viewport~                               |
-| ~:html-wrap-src-lines~                         | ~org-html-wrap-src-lines~                         |
-| ~:html-xml-declaration~                        | ~org-html-xml-declaration~                        |
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox-html)
+(let ((alist (org-export-backend-options (org-export-get-backend 'html))))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
 
 **** LaTeX specific properties
 :PROPERTIES:
 :UNNUMBERED: notoc
 :END:
 
-| ~:latex-active-timestamp-format~       | ~org-latex-active-timestamp-format~       |
-| ~:latex-caption-above~                 | ~org-latex-caption-above~                 |
-| ~:latex-classes~                       | ~org-latex-classes~                       |
-| ~:latex-class~                         | ~org-latex-default-class~                 |
-| ~:latex-compiler~                      | ~org-latex-compiler~                      |
-| ~:latex-default-figure-position~       | ~org-latex-default-figure-position~       |
-| ~:latex-default-table-environment~     | ~org-latex-default-table-environment~     |
-| ~:latex-default-table-mode~            | ~org-latex-default-table-mode~            |
-| ~:latex-diary-timestamp-format~        | ~org-latex-diary-timestamp-format~        |
-| ~:latex-engraved-options~              | ~org-latex-engraved-options~              |
-| ~:latex-engraved-preamble~             | ~org-latex-engraved-preamble~             |
-| ~:latex-engraved-theme~                | ~org-latex-engraved-theme~                |
-| ~:latex-footnote-defined-format~       | ~org-latex-footnote-defined-format~       |
-| ~:latex-footnote-separator~            | ~org-latex-footnote-separator~            |
-| ~:latex-format-drawer-function~        | ~org-latex-format-drawer-function~        |
-| ~:latex-format-headline-function~      | ~org-latex-format-headline-function~      |
-| ~:latex-format-inlinetask-function~    | ~org-latex-format-inlinetask-function~    |
-| ~:latex-hyperref-template~             | ~org-latex-hyperref-template~             |
-| ~:latex-image-default-height~          | ~org-latex-image-default-height~          |
-| ~:latex-image-default-option~          | ~org-latex-image-default-option~          |
-| ~:latex-image-default-width~           | ~org-latex-image-default-width~           |
-| ~:latex-images-centered~               | ~org-latex-images-centered~               |
-| ~:latex-inactive-timestamp-format~     | ~org-latex-inactive-timestamp-format~     |
-| ~:latex-inline-image-rules~            | ~org-latex-inline-image-rules~            |
-| ~:latex-link-with-unknown-path-format~ | ~org-latex-link-with-unknown-path-format~ |
-| ~:latex-listings-langs~                | ~org-latex-listings-langs~                |
-| ~:latex-listings-options~              | ~org-latex-listings-options~              |
-| ~:latex-minted-langs~                  | ~org-latex-minted-langs~                  |
-| ~:latex-minted-options~                | ~org-latex-minted-options~                |
-| ~:latex-prefer-user-labels~            | ~org-latex-prefer-user-labels~            |
-| ~:latex-subtitle-format~               | ~org-latex-subtitle-format~               |
-| ~:latex-subtitle-separate~             | ~org-latex-subtitle-separate~             |
-| ~:latex-src-block-backend~             | ~org-latex-src-block-backend~             |
-| ~:latex-table-scientific-notation~     | ~org-latex-table-scientific-notation~     |
-| ~:latex-tables-booktabs~               | ~org-latex-tables-booktabs~               |
-| ~:latex-tables-centered~               | ~org-latex-tables-centered~               |
-| ~:latex-text-markup-alist~             | ~org-latex-text-markup-alist~             |
-| ~:latex-title-command~                 | ~org-latex-title-command~                 |
-| ~:latex-toc-command~                   | ~org-latex-toc-command~                   |
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox-latex)
+(let ((alist (org-export-backend-options (org-export-get-backend 'latex))))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
 
 **** Markdown specific properties
 :PROPERTIES:
 :UNNUMBERED: notoc
 :END:
 
-| ~:md-footnote-format~   | ~org-md-footnote-format~   |
-| ~:md-footnotes-section~ | ~org-md-footnotes-section~ |
-| ~:md-headline-style~    | ~org-md-headline-style~    |
-| ~:md-toplevel-hlevel~   | ~org-md-toplevel-hlevel~   |
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox-md)
+(let ((alist (org-export-backend-options (org-export-get-backend 'md))))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
 
 **** ODT specific properties
 :PROPERTIES:
 :UNNUMBERED: notoc
 :END:
 
-| ~:odt-content-template-file~      | ~org-odt-content-template-file~      |
-| ~:odt-display-outline-level~      | ~org-odt-display-outline-level~      |
-| ~:odt-fontify-srcblocks~          | ~org-odt-fontify-srcblocks~          |
-| ~:odt-format-drawer-function~     | ~org-odt-format-drawer-function~     |
-| ~:odt-format-headline-function~   | ~org-odt-format-headline-function~   |
-| ~:odt-format-inlinetask-function~ | ~org-odt-format-inlinetask-function~ |
-| ~:odt-inline-formula-rules~       | ~org-odt-inline-formula-rules~       |
-| ~:odt-inline-image-rules~         | ~org-odt-inline-image-rules~         |
-| ~:odt-pixels-per-inch~            | ~org-odt-pixels-per-inch~            |
-| ~:odt-styles-file~                | ~org-odt-styles-file~                |
-| ~:odt-table-styles~               | ~org-odt-table-styles~               |
-| ~:odt-use-date-fields~            | ~org-odt-use-date-fields~            |
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox-odt)
+(let ((alist (org-export-backend-options (org-export-get-backend 'odt))))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
 
 **** Texinfo specific properties
 :PROPERTIES:
 :UNNUMBERED: notoc
 :END:
 
-| ~:texinfo-active-timestamp-format~       | ~org-texinfo-active-timestamp-format~       |
-| ~:texinfo-classes~                       | ~org-texinfo-classes~                       |
-| ~:texinfo-class~                         | ~org-texinfo-default-class~                 |
-| ~:texinfo-compact-itemx                  | ~org-texinfo-compact-itemx~                 |
-| ~:texinfo-table-default-markup~          | ~org-texinfo-table-default-markup~          |
-| ~:texinfo-diary-timestamp-format~        | ~org-texinfo-diary-timestamp-format~        |
-| ~:texinfo-filename~                      | ~org-texinfo-filename~                      |
-| ~:texinfo-format-drawer-function~        | ~org-texinfo-format-drawer-function~        |
-| ~:texinfo-format-headline-function~      | ~org-texinfo-format-headline-function~      |
-| ~:texinfo-format-inlinetask-function~    | ~org-texinfo-format-inlinetask-function~    |
-| ~:texinfo-inactive-timestamp-format~     | ~org-texinfo-inactive-timestamp-format~     |
-| ~:texinfo-link-with-unknown-path-format~ | ~org-texinfo-link-with-unknown-path-format~ |
-| ~:texinfo-node-description-column~       | ~org-texinfo-node-description-column~       |
-| ~:texinfo-table-scientific-notation~     | ~org-texinfo-table-scientific-notation~     |
-| ~:texinfo-tables-verbatim~               | ~org-texinfo-tables-verbatim~               |
-| ~:texinfo-text-markup-alist~             | ~org-texinfo-text-markup-alist~             |
+#+begin_src emacs-lisp :exports results :results table :eval yes :noweb yes
+(require 'ox-texinfo)
+(let ((alist (org-export-backend-options (org-export-get-backend 'texinfo))))
+<<org-manual-get-export-props-customizations>>
+)
+#+end_src
 
 *** Publishing links
 :PROPERTIES:
@@ -18644,7 +18648,7 @@ options; they are mutually exclusive.
   but no processing is performed on the return value.  Calling the
   code block programmatically (see [[*How to evaluate source code]]) or by
   reference (see [[*Passing arguments]] and [[*Noweb Reference Syntax]]) will
-  always yield nil.
+  always yield ~nil~.
 
 - =append= ::
 
@@ -19231,6 +19235,9 @@ the second code block is expanded as
 ,#+END_SRC
 #+end_example
 
+Note that noweb expansion does not automatically carry over =:var=
+header arguments[fn:49].
+
 You may also include the contents of multiple blocks sharing a common
 =noweb-ref= header argument, which can be set at the file, subtree,
 or code block level.  In the example Org file shown next, the body of
@@ -19766,7 +19773,7 @@ in the desired amount with hard spaces and hiding leading stars.
 To display the buffer in the indented view, activate Org Indent minor
 mode, using {{{kbd(M-x org-indent-mode)}}}.  Text lines that are not
 headlines are prefixed with virtual spaces to vertically align with
-the headline text[fn:49].
+the headline text[fn:50].
 
 #+vindex: org-indent-indentation-per-level
 To make more horizontal space, the headlines are shifted by two
@@ -19794,7 +19801,7 @@ use =STARTUP= keyword as follows:
 
 It is possible to use hard spaces to achieve the indentation instead,
 if the bare ASCII file should have the indented look also outside
-Emacs[fn:50].  With Org's support, you have to indent all lines to
+Emacs[fn:51].  With Org's support, you have to indent all lines to
 line up with the outline headers.  You would use these settings[fn::
 ~org-adapt-indentation~ can also be set to ='headline-data=, in which
 case only data lines below the headline will be indented.]:
@@ -20910,8 +20917,8 @@ specifying the respective key as property =CRYPTKEY=, e.g.:
   :END:
 #+end_example
 
-Note that =CRYPTKEY= property is only effective when ~org-crypt-key~
-is set to non-nil.  ~nil~ value of ~org-crypt-key~ makes Org use
+Note that the =CRYPTKEY= property is only effective when
+~org-crypt-key~ is non-~nil~.  If ~org-crypt-key~ is ~nil~, Org uses
 symmetric encryption unconditionally.
 
 Excluding the =crypt= tag from inheritance prevents already encrypted
@@ -20949,7 +20956,7 @@ Tags]]) only for those set in these variables.
 
 #+vindex: org-mobile-directory
 The mobile application needs access to a file directory on
-a server[fn:51] to interact with Emacs.  Pass its location through
+a server[fn:52] to interact with Emacs.  Pass its location through
 the ~org-mobile-directory~ variable.  If you can mount that directory
 locally just set the variable to point to that directory:
 
@@ -20993,7 +21000,7 @@ Symbolic links in ~org-directory~ need to have the same name as their
 targets.].
 
 Push creates a special Org file =agendas.org= with custom agenda views
-defined by the user[fn:52].
+defined by the user[fn:53].
 
 Finally, Org writes the file =index.org=, containing links to other
 files.  The mobile application reads this file first from the server
@@ -21070,10 +21077,9 @@ of Org.
 :END:
 #+cindex: hooks
 
-Org has a large number of hook variables for adding functionality.
-This appendix illustrates using a few.  A complete list of hooks with
-documentation is maintained by the Worg project at
-https://orgmode.org/worg/doc.html#hooks.
+Org has a large number of hook variables for adding functionality.  A
+complete list of hooks with documentation is maintained by the Worg
+project at https://orgmode.org/worg/doc.html#hooks.
 
 ** Add-on Packages
 :PROPERTIES:
@@ -21313,7 +21319,7 @@ of these strategies:
 To wrap a source table in LaTeX, use the =comment= environment
 provided by =comment.sty=[fn:: https://www.ctan.org/pkg/comment].  To
 activate it, put ~\usepackage{comment}~ in the document header.
-Orgtbl mode inserts a radio table skeleton[fn:53] with the command
+Orgtbl mode inserts a radio table skeleton[fn:54] with the command
 {{{kbd(M-x orgtbl-insert-radio-table)}}}, which prompts for a table
 name.  For example, if =salesfigures= is the name, the template
 inserts:
@@ -21333,7 +21339,7 @@ The line =#+ORGTBL: SEND= tells Orgtbl mode to use the function
 ~orgtbl-to-latex~ to convert the table to LaTeX format, then insert
 the table at the target (receive) location named =salesfigures=.  Now
 the table is ready for data entry.  It can even use spreadsheet
-features[fn:54]:
+features[fn:55]:
 
 #+begin_example
 % BEGIN RECEIVE ORGTBL salesfigures
@@ -21694,15 +21700,13 @@ number.  Here are tips to speed up:
   #+end_src
 
   #+vindex: org-agenda-ignore-properties
-- Disable parsing of some drawer properties:
+- Disable parsing of some properties:
 
   #+begin_src emacs-lisp
-  (setq org-agenda-ignore-properties '(effort appt stats category))
+  (setq org-agenda-ignore-properties '(stats))
   #+end_src
 
-  The drawer properties you can disable in the agenda are effort
-  estimates (~effort~), appointments (~appt~), statistics (~stats~)
-  and subtree-local categories (~category~).
+  This will disable parsing and updating statistic cookies.
 
 These options can be applied to selected agenda views.  For more
 details about generation of agenda views, see the docstrings for the
@@ -22748,29 +22752,58 @@ as latexmk, can select the correct bibliography compiler.
 are not evaluated when they appear in a keyword (see [[*Summary of
 In-Buffer Settings]]).
 
-[fn:49] Org Indent mode also sets ~wrap-prefix~ correctly for
+[fn:49] In the following example, attempting to evaluate
+the second code block will give an error, because the variables
+defined in the first code block will not be defined in the second
+block.
+
+#+begin_example
+,#+NAME: get-prompt
+,#+BEGIN_SRC emacs-lisp :var prompt="root> " :var command="ls"
+  (concat prompt command)
+,#+END_SRC
+
+,#+RESULTS: get-prompt
+: root> ls
+
+,#+BEGIN_SRC emacs-lisp :noweb yes
+  <<get-prompt>>
+,#+END_SRC
+#+end_example
+
+The previous block is expanded without setting ~prompt~ and ~command~
+values.
+
+#+begin_example
+,#+BEGIN_SRC emacs-lisp
+  (concat prompt command)
+,#+END_SRC
+#+end_example
+
+
+[fn:50] Org Indent mode also sets ~wrap-prefix~ correctly for
 indenting and wrapping long lines of headlines or text.  This minor
 mode also handles Visual Line mode and directly applied settings
 through ~word-wrap~.
 
-[fn:50] This works, but requires extra effort.  Org Indent mode is
+[fn:51] This works, but requires extra effort.  Org Indent mode is
 more convenient for most applications.
 
-[fn:51] For a server to host files, consider using a WebDAV server,
+[fn:52] For a server to host files, consider using a WebDAV server,
 such as [[https://nextcloud.com][Nextcloud]].  Additional help is at this [[https://orgmode.org/worg/org-faq.html#mobileorg_webdav][FAQ entry]].
 
-[fn:52] While creating the agendas, Org mode forces =ID= properties
+[fn:53] While creating the agendas, Org mode forces =ID= properties
 on all referenced entries, so that these entries can be uniquely
 identified if Org Mobile flags them for further action.  To avoid
 setting properties configure the variable
 ~org-mobile-force-id-on-agenda-items~ to ~nil~.  Org mode then relies
 on outline paths, assuming they are unique.
 
-[fn:53] By default this works only for LaTeX, HTML, and Texinfo.
+[fn:54] By default this works only for LaTeX, HTML, and Texinfo.
 Configure the variable ~orgtbl-radio-table-templates~ to install
 templates for other modes.
 
-[fn:54] If the =TBLFM= keyword contains an odd number of dollar
+[fn:55] If the =TBLFM= keyword contains an odd number of dollar
 characters, this may cause problems with Font Lock in LaTeX mode.  As
 shown in the example you can fix this by adding an extra line inside
 the =comment= environment that is used to balance the dollar

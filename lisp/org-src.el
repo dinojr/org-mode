@@ -48,11 +48,19 @@
 (declare-function org-element-at-point "org-element" (&optional pom cached-only))
 (declare-function org-element-class "org-element" (datum &optional parent))
 (declare-function org-element-context "org-element" (&optional element))
-(declare-function org-element-lineage "org-element"
+(declare-function org-element-lineage "org-element-ast"
 		  (blob &optional types with-self))
 (declare-function org-element--parse-paired-brackets "org-element" (char))
-(declare-function org-element-property "org-element" (property element))
-(declare-function org-element-type "org-element" (element))
+(declare-function org-element-property "org-element-ast" (property node))
+(declare-function org-element-begin "org-element" (node))
+(declare-function org-element-end "org-element" (node))
+(declare-function org-element-contents-begin "org-element" (node))
+(declare-function org-element-contents-end "org-element" (node))
+(declare-function org-element-post-affiliated "org-element" (node))
+(declare-function org-element-post-blank "org-element" (node))
+(declare-function org-element-parent "org-element-ast" (node))
+(declare-function org-element-type "org-element-ast" (node &optional anonymous))
+(declare-function org-element-type-p "org-element-ast" (node types))
 (declare-function org-footnote-goto-definition "org-footnote"
 		  (label &optional location))
 
@@ -200,7 +208,7 @@ but which mess up the display of a snippet in Org exported files.")
 The shells are associated with `sh-mode'."
   (mapcar
    (lambda (shell) (cons (symbol-name shell) 'sh))
-   (delete-dups (flatten-tree sh-ancestor-alist))))
+   (delete-dups (org--flatten-tree sh-ancestor-alist))))
 
 (defcustom org-src-lang-modes
   `(("C" . c)
@@ -318,9 +326,6 @@ is 0.")
   "File name associated to Org source buffer, or nil.")
 (put 'org-src-source-file-name 'permanent-local t)
 
-(defvar-local org-src--preserve-blank-line nil)
-(put 'org-src--preserve-blank-line 'permanent-local t)
-
 (defun org-src--construct-edit-buffer-name (org-buffer-name lang)
   "Construct the buffer name for a source editing buffer.
 Format is \"*Org Src ORG-BUFFER-NAME[ LANG ]*\"."
@@ -377,36 +382,36 @@ where BEG and END are buffer positions and CONTENTS is a string."
      (cond
       ((eq type 'footnote-definition)
        (let* ((beg (progn
-		     (goto-char (org-element-property :post-affiliated datum))
+		     (goto-char (org-element-post-affiliated datum))
 		     (search-forward "]")))
-	      (end (or (org-element-property :contents-end datum) beg)))
+	      (end (or (org-element-contents-end datum) beg)))
 	 (list beg end (buffer-substring-no-properties beg end))))
       ((eq type 'inline-src-block)
-       (let ((beg (progn (goto-char (org-element-property :begin datum))
+       (let ((beg (progn (goto-char (org-element-begin datum))
 			 (search-forward "{" (line-end-position) t)))
-	     (end (progn (goto-char (org-element-property :end datum))
+	     (end (progn (goto-char (org-element-end datum))
 			 (search-backward "}" (line-beginning-position) t))))
 	 (list beg end (buffer-substring-no-properties beg end))))
       ((eq type 'latex-fragment)
-       (let ((beg (org-element-property :begin datum))
-	     (end (org-with-point-at (org-element-property :end datum)
+       (let ((beg (org-element-begin datum))
+	     (end (org-with-point-at (org-element-end datum)
 		    (skip-chars-backward " \t")
 		    (point))))
 	 (list beg end (buffer-substring-no-properties beg end))))
-      ((org-element-property :contents-begin datum)
-       (let ((beg (org-element-property :contents-begin datum))
-	     (end (org-element-property :contents-end datum)))
+      ((org-element-contents-begin datum)
+       (let ((beg (org-element-contents-begin datum))
+	     (end (org-element-contents-end datum)))
 	 (list beg end (buffer-substring-no-properties beg end))))
       ((memq type '(example-block export-block src-block comment-block))
-       (list (progn (goto-char (org-element-property :post-affiliated datum))
+       (list (progn (goto-char (org-element-post-affiliated datum))
 		    (line-beginning-position 2))
-	     (progn (goto-char (org-element-property :end datum))
+	     (progn (goto-char (org-element-end datum))
 		    (skip-chars-backward " \r\t\n")
 		    (line-beginning-position 1))
 	     (org-element-property :value datum)))
       ((memq type '(fixed-width latex-environment table))
-       (let ((beg (org-element-property :post-affiliated datum))
-	     (end (progn (goto-char (org-element-property :end datum))
+       (let ((beg (org-element-post-affiliated datum))
+	     (end (progn (goto-char (org-element-end datum))
 			 (skip-chars-backward " \r\t\n")
 			 (line-beginning-position 2))))
 	 (list beg
@@ -447,58 +452,89 @@ END."
   "Non-nil when point is on DATUM.
 DATUM is an element or an object.  Consider blank lines or white
 spaces after it as being outside."
-  (and (>= (point) (org-element-property :begin datum))
+  (and (>= (point) (org-element-begin datum))
        (<= (point)
-	   (org-with-wide-buffer
-	    (goto-char (org-element-property :end datum))
-	    (skip-chars-backward " \r\t\n")
-	    (if (eq (org-element-class datum) 'element)
-		(line-end-position)
-	      (point))))))
+	  (org-with-wide-buffer
+	   (goto-char (org-element-end datum))
+	   (skip-chars-backward " \r\t\n")
+	   (if (eq (org-element-class datum) 'element)
+	       (line-end-position)
+	     (point))))))
 
-(defun org-src--contents-for-write-back (write-back-buf)
-  "Populate WRITE-BACK-BUF with contents in the appropriate format.
-Assume point is in the corresponding edit buffer."
-  (let ((indentation-offset
-	 (if org-src--preserve-indentation 0
-	   (+ (or org-src--block-indentation 0)
-	      (if (memq org-src--source-type '(example-block src-block))
-		  org-src--content-indentation
-		0))))
-	(use-tabs? (and (> org-src--tab-width 0) t))
-        (preserve-fl (eq org-src--source-type 'latex-fragment))
-	(source-tab-width org-src--tab-width)
-	(contents (org-with-wide-buffer
-                   (let ((eol (line-end-position)))
-                     (list (buffer-substring (point-min) eol)
-                           (buffer-substring eol (point-max))))))
-	(write-back org-src--allow-write-back)
-        (preserve-blank-line org-src--preserve-blank-line)
-        marker)
+(defun org-src-preserve-indentation-p (&optional node)
+  "Non-nil when indentation should be preserved within NODE.
+When NODE is not passed, assume element at point."
+  (let ((node (or node (org-element-at-point))))
+    (and (org-element-type-p node '(example-block src-block))
+         (or (org-element-property :preserve-indent node)
+	     org-src-preserve-indentation))))
+
+(defun org-src--contents-for-write-back-1
+    ( write-back-buf contents
+      &optional indentation-offset preserve-fl source-tab-width write-back)
+  "Populate WRITE-BACK-BUF with CONTENTS in the appropriate format.
+
+INDENTATION-OFFSET, when non-nil is additional indentation to be applied
+to all the lines.  PRESERVE-FL means that first line should not be
+indented (useful for inline blocks contents that belong to paragraph).
+The original indentation, if any, is not altered.
+
+TAB-WIDTH is `tab-width' to be used when indenting.  The value of 0
+means that tabs should not be used.
+
+WRITE-BACK, when non-nil, is a function to be called with point at
+WRITE-BACK-BUF after inserting the original contents, but before
+applying extra indentation."
+  (let ((use-tabs? (and (> source-tab-width 0) t))
+        indent-str)
     (with-current-buffer write-back-buf
-      ;; Reproduce indentation parameters from source buffer.
-      (setq indent-tabs-mode use-tabs?)
-      (when (> source-tab-width 0) (setq tab-width source-tab-width))
       ;; Apply WRITE-BACK function on edit buffer contents.
-      (insert (org-no-properties (car contents)))
-      (setq marker (point-marker))
-      (insert (org-no-properties (car (cdr contents))))
+      (insert (org-no-properties contents))
       (goto-char (point-min))
       (when (functionp write-back) (save-excursion (funcall write-back)))
       ;; Add INDENTATION-OFFSET to every line in buffer,
       ;; unless indentation is meant to be preserved.
-      (when (> indentation-offset 0)
-	(when preserve-fl (forward-line))
+      (when (and indentation-offset (> indentation-offset 0))
+        ;; The exact sequence of tabs and spaces used to indent
+        ;; up to `indentation-offset' in the Org buffer.
+        (setq indent-str
+              (with-temp-buffer
+                ;; Reproduce indentation parameters.
+                (setq indent-tabs-mode use-tabs?)
+                (when (> source-tab-width 0)
+                  (setq tab-width source-tab-width))
+                (indent-to indentation-offset)
+                (buffer-string)))
+        ;; LaTeX-fragments are inline. Do not add indentation to their
+        ;; first line.
+        (when preserve-fl (forward-line))
         (while (not (eobp))
-	  (skip-chars-forward " \t")
-          (when (or (not (eolp))                               ; not a blank line
-                    (and (eq (point) (marker-position marker)) ; current line
-                         preserve-blank-line))
-	    (let ((i (current-column)))
-	      (delete-region (line-beginning-position) (point))
-	      (indent-to (+ i indentation-offset))))
-	  (forward-line)))
-      (set-marker marker nil))))
+          ;; Keep empty src lines empty, even when src block is
+          ;; indented on Org side.
+          ;; See https://list.orgmode.org/725763.1632663635@apollo2.minshall.org/T/
+          (when (not (eolp)) ; not an empty line
+            (insert indent-str))
+	  (forward-line))))))
+
+(defun org-src--contents-for-write-back (write-back-buf)
+  "Populate WRITE-BACK-BUF with contents in the appropriate format.
+Assume point is in the corresponding edit buffer."
+  (org-src--contents-for-write-back-1
+   write-back-buf
+   ;; CONTENTS
+   (org-with-wide-buffer (buffer-string))
+   ;; INDENTATION
+   (if org-src--preserve-indentation 0
+     (+ (or org-src--block-indentation 0)
+	(if (memq org-src--source-type '(example-block src-block))
+	    org-src--content-indentation
+	  0)))
+   ;; PRESERVE-FL
+   (eq org-src--source-type 'latex-fragment)
+   ;; TAB-WIDTH
+   org-src--tab-width
+   ;; WRITE-BACK
+   org-src--allow-write-back))
 
 (defun org-src--edit-element
     (datum name &optional initialize write-back contents remote)
@@ -540,24 +576,16 @@ Leave point in edit buffer."
 	     (source-file-name (buffer-file-name (buffer-base-buffer)))
 	     (source-tab-width (if indent-tabs-mode tab-width 0))
 	     (type (org-element-type datum))
-	     (block-ind (org-with-point-at (org-element-property :begin datum)
+	     (block-ind (org-with-point-at (org-element-begin datum)
                           (cond
                            ((save-excursion (skip-chars-backward " \t") (bolp))
 			    (org-current-text-indentation))
-                           ((org-element-property :parent datum)
+                           ((org-element-parent datum)
                             (org--get-expected-indentation
-                             (org-element-property :parent datum) nil))
+                             (org-element-parent datum) nil))
                            (t (org-current-text-indentation)))))
 	     (content-ind org-edit-src-content-indentation)
-             (blank-line (save-excursion (beginning-of-line)
-                                         (looking-at-p "^[[:space:]]*$")))
-             (empty-line (and blank-line (looking-at-p "^$")))
-             (preserve-blank-line (or (and blank-line (not empty-line))
-                                      (and empty-line (= (+ block-ind content-ind) 0))))
-	     (preserve-ind
-	      (and (memq type '(example-block src-block))
-		   (or (org-element-property :preserve-indent datum)
-		       org-src-preserve-indentation)))
+	     (preserve-ind (org-src-preserve-indentation-p datum))
 	     ;; Store relative positions of mark (if any) and point
 	     ;; within the edited area.
 	     (point-coordinates (and (not remote)
@@ -584,7 +612,7 @@ Leave point in edit buffer."
 	;; Initialize buffer.
 	(when (functionp initialize)
 	  (let ((org-inhibit-startup t))
-	    (condition-case e
+	    (condition-case-unless-debug e
 		(funcall initialize)
 	      (error (message "Initialization fails with: %S"
 			      (error-message-string e))))))
@@ -603,7 +631,6 @@ Leave point in edit buffer."
 	(setq org-src--overlay overlay)
 	(setq org-src--allow-write-back write-back)
 	(setq org-src-source-file-name source-file-name)
-        (setq org-src--preserve-blank-line preserve-blank-line)
 	;; Start minor mode.
 	(org-src-mode)
 	;; Clear undo information so we cannot undo back to the
@@ -637,7 +664,7 @@ Leave point in edit buffer."
   "Fontify code block between START and END using LANG's syntax.
 This function is called by Emacs' automatic fontification, as long
 as `org-src-fontify-natively' is non-nil."
-  (let ((modified (buffer-modified-p)))
+  (let ((modified (buffer-modified-p)) native-tab-width)
     (remove-text-properties start end '(face nil))
     (let ((lang-mode (org-src-get-lang-mode lang)))
       (when (fboundp lang-mode)
@@ -651,6 +678,7 @@ as `org-src-fontify-natively' is non-nil."
 	      ;; Add string and a final space to ensure property change.
 	      (insert string " "))
 	    (unless (eq major-mode lang-mode) (funcall lang-mode))
+            (setq native-tab-width tab-width)
             (font-lock-ensure)
 	    (let ((pos (point-min)) next)
 	      (while (setq next (next-property-change pos))
@@ -708,6 +736,21 @@ as `org-src-fontify-natively' is non-nil."
       (when (or (facep src-face) (listp src-face))
         (font-lock-append-text-property start end 'face src-face))
       (font-lock-append-text-property start end 'face 'org-block))
+    ;; Display native tab indentation characters as spaces
+    (save-excursion
+      (goto-char start)
+      (let ((indent-offset
+	     (if (org-src-preserve-indentation-p) 0
+	       (+ (progn (backward-char)
+                         (org-current-text-indentation))
+	          org-edit-src-content-indentation))))
+        (while (re-search-forward "^[ ]*\t" end t)
+          (let* ((b (and (eq indent-offset (move-to-column indent-offset))
+                         (point)))
+                 (e (progn (skip-chars-forward "\t") (point)))
+                 (s (and b (make-string (* (- e b) native-tab-width) ? ))))
+            (when (and b (< b e)) (add-text-properties b e `(display ,s)))
+            (forward-char)))))
     ;; Clear abbreviated link folding.
     (org-fold-region start end nil 'org-link)
     (add-text-properties
@@ -717,7 +760,7 @@ as `org-src-fontify-natively' is non-nil."
 
 (defun org-fontify-inline-src-blocks (limit)
   "Try to apply `org-fontify-inline-src-blocks-1'."
-  (condition-case nil
+  (condition-case-unless-debug nil
       (org-fontify-inline-src-blocks-1 limit)
     (error (message "Org mode fontification error in %S at %d"
                     (current-buffer)
@@ -1039,7 +1082,7 @@ A coderef format regexp can only match at the end of a line."
   (interactive)
   (let* ((context (org-element-context))
 	 (label (org-element-property :label context)))
-    (unless (and (eq (org-element-type context) 'footnote-reference)
+    (unless (and (org-element-type-p context 'footnote-reference)
 		 (org-src--on-datum-p context))
       (user-error "Not on a footnote reference"))
     (unless label (user-error "Cannot edit remotely anonymous footnotes"))
@@ -1047,16 +1090,16 @@ A coderef format regexp can only match at the end of a line."
 			(org-footnote-goto-definition label)
 			(backward-char)
 			(org-element-context)))
-	   (inline? (eq 'footnote-reference (org-element-type definition)))
+	   (inline? (org-element-type-p definition 'footnote-reference))
 	   (contents
 	    (org-with-wide-buffer
 	     (buffer-substring-no-properties
-	      (or (org-element-property :post-affiliated definition)
-		  (org-element-property :begin definition))
+	      (or (org-element-post-affiliated definition)
+		  (org-element-begin definition))
 	      (cond
-	       (inline? (1+ (org-element-property :contents-end definition)))
-	       ((org-element-property :contents-end definition))
-	       (t (goto-char (org-element-property :post-affiliated definition))
+	       (inline? (1+ (org-element-contents-end definition)))
+	       ((org-element-contents-end definition))
+	       (t (goto-char (org-element-post-affiliated definition))
 		  (line-end-position)))))))
       (add-text-properties
        0
@@ -1087,7 +1130,7 @@ A coderef format regexp can only match at the end of a line."
 	   ;; If footnote reference belongs to a table, make sure to
 	   ;; remove any newline characters in order to preserve
 	   ;; table's structure.
-	   (when (org-element-lineage definition '(table-cell))
+	   (when (org-element-lineage definition 'table-cell)
 	     (while (search-forward "\n" nil t) (replace-match " ")))))
        contents
        'remote))
@@ -1106,7 +1149,7 @@ the area in the Org mode buffer.
 Throw an error when not at such a table."
   (interactive)
   (let ((element (org-element-at-point)))
-    (unless (and (eq (org-element-type element) 'table)
+    (unless (and (org-element-type-p element 'table)
 		 (eq (org-element-property :type element) 'table.el)
 		 (org-src--on-datum-p element))
       (user-error "Not in a table.el table"))
@@ -1122,14 +1165,14 @@ Throw an error when not at such a table."
   "Edit LaTeX fragment at point."
   (interactive)
   (let ((context (org-element-context)))
-    (unless (and (eq 'latex-fragment (org-element-type context))
+    (unless (and (org-element-type-p context 'latex-fragment)
 		 (org-src--on-datum-p context))
       (user-error "Not on a LaTeX fragment"))
     (let* ((contents
 	    (buffer-substring-no-properties
-	     (org-element-property :begin context)
-	     (- (org-element-property :end context)
-		(org-element-property :post-blank context))))
+	     (org-element-begin context)
+	     (- (org-element-end context)
+		(org-element-post-blank context))))
 	   (delim-length (if (string-match "\\`\\$[^$]" contents) 1 2)))
       ;; Make the LaTeX deliminators read-only.
       (add-text-properties 0 delim-length
@@ -1153,7 +1196,7 @@ Throw an error when not at such a table."
 	 ;; If within a table a newline would disrupt the structure,
 	 ;; so remove newlines.
 	 (goto-char (point-min))
-	 (when (org-element-lineage context '(table-cell))
+	 (when (org-element-lineage context 'table-cell)
 	   (while (search-forward "\n" nil t) (replace-match " "))))
        contents))
     t))
@@ -1170,7 +1213,7 @@ will then replace
 the LaTeX environment in the Org mode buffer."
   (interactive)
   (let ((element (org-element-at-point)))
-    (unless (and (eq (org-element-type element) 'latex-environment)
+    (unless (and (org-element-type-p element 'latex-environment)
 		 (org-src--on-datum-p element))
       (user-error "Not in a LaTeX environment"))
     (org-src--edit-element
@@ -1194,7 +1237,7 @@ the area in the Org mode buffer.
 Throw an error when not at an export block."
   (interactive)
   (let ((element (org-element-at-point)))
-    (unless (and (eq (org-element-type element) 'export-block)
+    (unless (and (org-element-type-p element 'export-block)
 		 (org-src--on-datum-p element))
       (user-error "Not in an export block"))
     (let* ((type (downcase (or (org-element-property :type element)
@@ -1222,7 +1265,7 @@ then replace the area in the Org mode buffer.
 Throw an error when not at a comment block."
   (interactive)
   (let ((element (org-element-at-point)))
-    (unless (and (eq (org-element-type element) 'comment-block)
+    (unless (and (org-element-type-p element 'comment-block)
 		 (org-src--on-datum-p element))
       (user-error "Not in a comment block"))
     (org-src--edit-element
@@ -1286,7 +1329,7 @@ name of the sub-editing buffer."
   "Edit inline source code at point."
   (interactive)
   (let ((context (org-element-context)))
-    (unless (and (eq (org-element-type context) 'inline-src-block)
+    (unless (and (org-element-type-p context 'inline-src-block)
 		 (org-src--on-datum-p context))
       (user-error "Not on inline source code"))
     (let* ((lang (org-element-property :language context))
@@ -1331,7 +1374,7 @@ will then replace
 the area in the Org mode buffer."
   (interactive)
   (let ((element (org-element-at-point)))
-    (unless (and (eq (org-element-type element) 'fixed-width)
+    (unless (and (org-element-type-p element 'fixed-width)
 		 (org-src--on-datum-p element))
       (user-error "Not in a fixed-width area"))
     (org-src--edit-element
@@ -1416,8 +1459,8 @@ EVENT is passed to `mouse-set-point'."
     (org-with-wide-buffer
      (when (and write-back
                 (not (equal (buffer-substring beg end)
-			  (with-current-buffer write-back-buf
-                            (buffer-string)))))
+			    (with-current-buffer write-back-buf
+                              (buffer-string)))))
        (undo-boundary)
        (goto-char beg)
        (let ((expecting-bol (bolp)))
@@ -1442,7 +1485,7 @@ EVENT is passed to `mouse-set-point'."
             (org-fold-folded-p nil 'block)
           (cl-some (lambda (o) (eq (overlay-get o 'invisible) 'org-hide-block))
 		   (overlays-at (point))))
-	(beginning-of-line 0))
+	(forward-line -1))
        (write-back (org-src--goto-coordinates coordinates beg end))))
     ;; Clean up left-over markers and restore window configuration.
     (set-marker beg nil)
