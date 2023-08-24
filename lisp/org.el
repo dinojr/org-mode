@@ -4800,6 +4800,7 @@ This is for getting out of special buffers like capture.")
 ;; babel
 (require 'ob)
 
+(defvar org-element-cache-version); Defined in org-element.el
 (defvar org-element-cache-persistent); Defined in org-element.el
 (defvar org-element-use-cache); Defined in org-element.el
 (defvar org-mode-loading nil
@@ -4890,7 +4891,10 @@ The following commands are available:
   (org-element-cache-reset)
   (when (and org-element-cache-persistent
              org-element-use-cache)
-    (org-persist-load 'org-element--cache (current-buffer) 'match-hash :read-related t))
+    (org-persist-load
+     `((elisp org-element--cache) (version ,org-element-cache-version))
+     (current-buffer)
+     'match-hash :read-related t))
   ;; Initialize macros templates.
   (org-macro-initialize-templates)
   ;; Initialize radio targets.
@@ -6372,7 +6376,10 @@ unconditionally."
        (if (not level) (outline-next-heading) ;before first headline
 	 (org-back-to-heading invisible-ok)
 	 (when (equal arg '(16)) (org-up-heading-safe))
-	 (org-end-of-subtree)))
+	 (org-end-of-subtree invisible-ok 'to-heading)))
+      ;; At `point-max', if the file does not have ending newline,
+      ;; create one, so that we are not appending stars at non-empty
+      ;; line.
       (unless (bolp) (insert "\n"))
       (when (and blank? (save-excursion
                           (backward-char)
@@ -6384,7 +6391,9 @@ unconditionally."
         (backward-char))
       (unless (and blank? (org-previous-line-empty-p))
 	(org-N-empty-lines-before-current (if blank? 1 0)))
-      (insert stars " ")
+      (insert stars " " "\n")
+      ;; Move point after stars.
+      (backward-char)
       ;; When INVISIBLE-OK is non-nil, ensure newly created headline
       ;; is visible.
       (unless invisible-ok
@@ -7096,6 +7105,9 @@ useful if the caller implements cut-and-paste as copy-then-paste-then-cut."
      (if (called-interactively-p 'any)
 	 (org-back-to-heading nil)    ; take what looks like a subtree
        (org-back-to-heading t))	      ; take what is really there
+     ;; Do not consider inlinetasks as a subtree.
+     (when (org-element-type-p (org-element-at-point) 'inlinetask)
+       (org-up-element))
      (setq beg (point))
      (skip-chars-forward " \t\r\n")
      (save-match-data
@@ -12094,7 +12106,8 @@ Returns the new tags string, or nil to not change the current settings."
 		    ((or ?\C-g
 		         (and ?q (guard (not (rassoc input-char tag-table-local)))))
 		     (delete-overlay org-tags-overlay)
-		     (throw 'quit nil))
+                     ;; Quit as C-g does.
+		     (keyboard-quit))
                     ;; Clear tags.
 		    (?\s
 		     (setq current-tags nil)
@@ -14824,12 +14837,12 @@ is considered `day' (i.e. only `bracket', `day', and `after' return
 values are possible).
 
 When matching, the match groups are the following:
-  group 1: year, if any
-  group 2: month, if any
-  group 3: day number, if any
-  group 4: day name, if any
-  group 5: hours, if any
-  group 6: minutes, if any"
+  group 2: year, if any
+  group 3: month, if any
+  group 4: day number, if any
+  group 5: day name, if any
+  group 7: hours, if any
+  group 8: minutes, if any"
   (let* ((regexp
           (if extended
               (if (eq extended 'agenda)
@@ -16269,6 +16282,7 @@ Possible values of this option are:
 
 skip        Don't display remote images.
 download    Always download and display remote images.
+t
 cache       Display remote images, and open them in separate buffers
             for caching.  Silently update the image buffer when a file
             change is detected."
@@ -16292,9 +16306,10 @@ according to the value of `org-display-remote-inline-images'."
 			 (set-buffer-multibyte nil)
 			 (insert-file-contents-literally file)
 			 (buffer-string)))
-	    (`cache (let ((revert-without-query '(".")))
-		      (with-current-buffer (find-file-noselect file)
-			(buffer-string))))
+	    ((or `cache `t)
+             (let ((revert-without-query '(".")))
+	       (with-current-buffer (find-file-noselect file)
+		 (buffer-string))))
 	    (`skip nil)
 	    (other
 	     (message "Invalid value of `org-display-remote-inline-images': %S"

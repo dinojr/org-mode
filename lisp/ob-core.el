@@ -175,7 +175,7 @@ This string must include a \"%s\" which will be replaced by the results."
      'safe-local-variable
      (lambda (value)
        (and (stringp value)
-	    (string-search "%s" value))))
+	    (string-match-p "%s" value))))
 
 (defcustom org-babel-hash-show-time nil
   "Non-nil means show the time the code block was evaluated in the result hash."
@@ -921,7 +921,10 @@ guess will be made."
 Expand a block of code with org-babel according to its header
 arguments.  This generic implementation of body expansion is
 called for languages which have not defined their own specific
-org-babel-expand-body:lang function."
+org-babel-expand-body:lang function.
+
+VAR-LINES is a list of lines that define variable environment.  These
+lines will be added after `:prologue' parameter and before BODY."
   (let ((pro (cdr (assq :prologue params)))
 	(epi (cdr (assq :epilogue params))))
     (mapconcat #'identity
@@ -933,7 +936,10 @@ org-babel-expand-body:lang function."
 
 ;;;###autoload
 (defun org-babel-expand-src-block (&optional _arg info params)
-  "Expand the current source code block.
+  "Expand the current source code block or block specified by INFO.
+INFO is the output of `org-babel-get-src-block-info'.
+PARAMS defines inherited header arguments.
+
 Expand according to the source code block's header
 arguments and pop open the results in a preview buffer."
   (interactive)
@@ -960,7 +966,7 @@ arguments and pop open the results in a preview buffer."
       expanded)))
 
 (defun org-babel-combine-header-arg-lists (original &rest others)
-  "Combine a number of lists of header argument names and arguments."
+  "Combine ORIGINAL and OTHERS lists of header argument names and arguments."
   (let ((results (copy-sequence original)))
     (dolist (new-list others)
       (dolist (arg-pair new-list)
@@ -995,7 +1001,10 @@ arguments and pop open the results in a preview buffer."
 
 ;;;###autoload
 (defun org-babel-insert-header-arg (&optional header-arg value)
-  "Insert a header argument selecting from lists of common args and values."
+  "Insert a header argument and its value.
+HEADER-ARG and VALUE, when provided, are the header argument name and
+its value.  When HEADER-ARG or VALUE are nil, offer interactive
+completion from lists of common args and values."
   (interactive)
   (let* ((info (org-babel-get-src-block-info 'no-eval))
 	 (lang (car info))
@@ -1059,6 +1068,9 @@ arguments and pop open the results in a preview buffer."
 ;;;###autoload
 (defun org-babel-load-in-session (&optional _arg info)
   "Load the body of the current source-code block.
+When optional argument INFO is non-nil, use source block defined in
+INFO, as returned by `org-babel-get-src-block-info'.
+
 Evaluate the header arguments for the source block before
 entering the session.  After loading the body this pops open the
 session."
@@ -1084,8 +1096,8 @@ session."
 
 ;;;###autoload
 (defun org-babel-initiate-session (&optional arg info)
-  "Initiate session for current code block.
-If called with a prefix argument then resolve any variable
+  "Initiate session for current code block or the block defined by INFO.
+If called with a prefix argument ARG, then resolve any variable
 references in the header arguments and assign these variables in
 the session.  Copy the body of the code block to the kill ring."
   (interactive "P")
@@ -1113,9 +1125,9 @@ the session.  Copy the body of the code block to the kill ring."
 
 ;;;###autoload
 (defun org-babel-switch-to-session (&optional arg info)
-  "Switch to the session of the current code block.
+  "Switch to the session of the current code block or block defined by INFO.
 Uses `org-babel-initiate-session' to start the session.  If called
-with a prefix argument then this is passed on to
+with a prefix argument ARG, then this is passed on to
 `org-babel-initiate-session'."
   (interactive "P")
   (pop-to-buffer (org-babel-initiate-session arg info))
@@ -1127,7 +1139,8 @@ with a prefix argument then this is passed on to
 
 ;;;###autoload
 (defun org-babel-switch-to-session-with-code (&optional arg _info)
-  "Switch to code buffer and display session."
+  "Switch to code buffer and display session.
+Prefix argument ARG is passed to `org-babel-switch-to-session'."
   (interactive "P")
   (let ((swap-windows
 	 (lambda ()
@@ -1166,7 +1179,7 @@ Return t if a code block was found at point, nil otherwise."
        t)))
 
 (defun org-babel-do-key-sequence-in-edit-buffer (key)
-  "Read key sequence and execute the command in edit buffer.
+  "Read key sequence KEY and execute the command in edit buffer.
 Enter a key sequence to be executed in the language major-mode
 edit buffer.  For example, TAB will alter the contents of the
 Org code block according to the effect of TAB in the language
@@ -1368,6 +1381,7 @@ buffer."
 ;;;###autoload
 (defun org-babel-execute-buffer (&optional arg)
   "Execute source code blocks in a buffer.
+Prefix argument ARG is passed to `org-babel-execute-src-block'.
 Call `org-babel-execute-src-block' on every source block in
 the current buffer."
   (interactive "P")
@@ -1383,7 +1397,7 @@ the current buffer."
 (defun org-babel-execute-subtree (&optional arg)
   "Execute source code blocks in a subtree.
 Call `org-babel-execute-src-block' on every source block in
-the current subtree."
+the current subtree, passing over the prefix argument ARG."
   (interactive "P")
   (save-restriction
     (save-excursion
@@ -1451,9 +1465,9 @@ CONTEXT specifies the context of evaluation.  It can be `:eval',
         (when (called-interactively-p 'interactive) (message hash))
         hash))))
 
-(defun org-babel-current-result-hash (&optional info)
+(defun org-babel-current-result-hash (&optional _info)
   "Return the current in-buffer hash."
-  (let ((result (org-babel-where-is-src-block-result nil info)))
+  (let ((result (org-babel-where-is-src-block-result nil)))
     (when result
       (org-with-point-at result
 	(let ((case-fold-search t)) (looking-at org-babel-result-regexp))
@@ -1537,7 +1551,9 @@ portions of results lines."
          (progn (org-babel-hide-result-toggle) t))))
 
 (defun org-babel-hide-result-toggle (&optional force)
-  "Toggle the visibility of the current result."
+  "Toggle the visibility of the current result.
+When FORCE is symbol `off', unconditionally display the result.
+Otherwise, when FORCE is non-nil, unconditionally hide the result."
   (interactive)
   (save-excursion
     (forward-line 0)
@@ -1682,7 +1698,8 @@ balanced instances of \"[ \t]:\", set ALTS to ((32 9) . 58)."
       (nreverse result))))
 
 (defun org-babel-join-splits-near-ch (ch list)
-  "Join splits where \"=\" is on either end of the split."
+  "Join strings in LIST where CH is on either end of the strings.
+This function will join list elements like \"a=\" \"2\" into \"a=2\"."
   (let ((last= (lambda (str) (= ch (aref str (1- (length str))))))
 	(first= (lambda (str) (= ch (aref str 0)))))
     (reverse
@@ -1719,7 +1736,9 @@ in parameters.  Return an alist."
 This allows expression of multiple variables with one :var as
 shown below.
 
-#+PROPERTY: var foo=1, bar=2"
+#+PROPERTY: var foo=1, bar=2
+
+HEADER-ARGUMENTS is alist of all the arguments."
   (let (results)
     (mapc (lambda (pair)
 	    (if (eq (car pair) :var)
@@ -1903,7 +1922,7 @@ src block, then return nil."
 
 ;;;###autoload
 (defun org-babel-goto-named-src-block (name)
-  "Go to a named source-code block."
+  "Go to a source-code block with NAME."
   (interactive
    (let ((completion-ignore-case t)
 	 (case-fold-search t)
@@ -1963,7 +1982,7 @@ to `org-babel-named-src-block-regexp'."
 
 ;;;###autoload
 (defun org-babel-goto-named-result (name)
-  "Go to a named result."
+  "Go to a result with NAME."
   (interactive
    (let ((completion-ignore-case t))
      (list (completing-read "Source-block name: "
@@ -2047,7 +2066,7 @@ block of the same language with the previous."
 	 (stars (concat (make-string (or (org-current-level) 1) ?*) " "))
 	 (upper-case-p (and block
 			    (let (case-fold-search)
-			      (string-search "#+BEGIN_SRC" block)))))
+			      (string-match-p "#\\+BEGIN_SRC" block)))))
     (if (and info start) ;; At src block, but not within blank lines after it.
         (mapc
          (lambda (place)
@@ -2175,11 +2194,8 @@ to HASH."
 	 ((or `inline-babel-call `inline-src-block)
 	  ;; Results for inline objects are located right after them.
 	  ;; There is no RESULTS line to insert either.
-	  (let ((limit (pcase (org-element-type (org-element-parent context))
-                         (`section (org-element-end
-                                    (org-element-parent context)))
-                         (_ (org-element-contents-end
-		             (org-element-parent context))))))
+	  (let ((limit (or (org-element-contents-end (org-element-parent context))
+                           (org-element-end (org-element-parent context)))))
 	    (goto-char (org-element-end context))
 	    (skip-chars-forward " \t\n" limit)
 	    (throw :found
@@ -2438,6 +2454,7 @@ INFO may provide the values of these header arguments (in the
       (when inline
 	(let ((warning
 	       (or (and (member "table" result-params) "`:results table'")
+                   (and (member "drawer" result-params) "`:results drawer'")
 		   (and result (listp result) "list result")
 		   (and result (string-match-p "\n." result) "multiline result")
 		   (and (member "list" result-params) "`:results list'"))))
@@ -2446,10 +2463,6 @@ INFO may provide the values of these header arguments (in the
       (save-excursion
 	(let* ((visible-beg (point-min-marker))
 	       (visible-end (copy-marker (point-max) t))
-	       (inline (let ((context (org-element-context)))
-			 (and (org-element-type-p
-                               context '(inline-babel-call inline-src-block))
-			      context)))
 	       (existing-result (org-babel-where-is-src-block-result t nil hash))
 	       (results-switches (cdr (assq :results_switches (nth 2 info))))
 	       ;; When results exist outside of the current visible

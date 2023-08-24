@@ -4940,7 +4940,10 @@ Press `\\[org-agenda-manipulate-query-add]', \
       "|"))
    "\n"))
 
-(defvar org-select-this-todo-keyword nil)
+(defvar org-select-this-todo-keyword nil
+  "Keyword selector for todo agenda.
+Should either be a keyword, \"*\", or \"|\"-separated list of todo
+keywords.")
 (defvar org-last-arg nil)
 
 (defvar crm-separator)
@@ -5637,11 +5640,11 @@ timestamp and the timestamp type relevant for the sorting strategy in
 			   org-todo-regexp)
 			  (org-select-this-todo-keyword
 			   (concat "\\("
-				   (mapconcat #'identity
-					      (org-split-string
-					       org-select-this-todo-keyword
-					       "|")
-					      "\\|")
+				   (mapconcat #'regexp-quote
+				              (org-split-string
+				               org-select-this-todo-keyword
+				               "|")
+				              "\\|")
 				   "\\)"))
 			  (t org-not-done-regexp))))
 	 marker priority urgency category level tags todo-state
@@ -6332,6 +6335,11 @@ specification like [h]h:mm."
     (org-element-cache-map
      (lambda (el)
        (when (and (org-element-property :deadline el)
+                  ;; Only consider active timestamp values.
+                  (memq (org-element-property
+                         :type
+                         (org-element-property :deadline el))
+                        '(diary active active-range))
                   (or (not with-hour)
                       (org-element-property
                        :hour-start
@@ -6533,6 +6541,11 @@ scheduled items with an hour specification like [h]h:mm."
     (org-element-cache-map
      (lambda (el)
        (when (and (org-element-property :scheduled el)
+                  ;; Only consider active timestamp values.
+                  (memq (org-element-property
+                         :type
+                         (org-element-property :scheduled el))
+                        '(diary active active-range))
                   (or (not with-hour)
                       (org-element-property
                        :hour-start
@@ -8285,7 +8298,7 @@ also press `-' or `+' to switch between filtering and excluding."
 	  (setq org-agenda-represented-categories
 		;; Enclose category names with a hyphen in double
 		;; quotes to process them specially in `org-agenda-filter'.
-		(mapcar (lambda (s) (if (string-search "-" s) (format "\"%s\"" s) s))
+		(mapcar (lambda (s) (if (string-match-p "-" s) (format "\"%s\"" s) s))
 			(nreverse (org-uniquify (delq nil categories)))))))))
 
 (defvar org-tag-groups-alist-for-agenda)

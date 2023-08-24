@@ -2110,6 +2110,10 @@ DEADLINE: <2012-03-29 thu.>"
   (should
    (= 0
       (org-test-with-temp-text "- A\n\n  - B\n\n<point>  - C\n\n  End sub-list"
+	(org-element-property :post-blank (org-element-at-point)))))
+  (should
+   (= 0
+      (org-test-with-temp-text "1. foo\n   1. bar\n  2.<point>  baz\n\n2. lorem\nipsum"
 	(org-element-property :post-blank (org-element-at-point))))))
 
 
@@ -4607,7 +4611,13 @@ Text
   (should
    (eq 'link
        (org-test-with-temp-text "* Headline :file<point>:tags: :real:tag:"
-	 (org-element-type (org-element-context))))))
+	 (org-element-type (org-element-context)))))
+  ;; Do not parse partial export snippets.
+  (should-not
+   (eq 'export-snippet
+       (org-test-with-temp-text
+           "<point>@@latex:\n\nparagraph\n\n@@"
+         (org-element-type (org-element-context))))))
 
 
 
@@ -5188,7 +5198,32 @@ paragraph
     (let ((org-element-use-cache t))
       (org-element-at-point (point-max))
       (delete-region (point) (point-max))
-      (should (eq 'paragraph (org-element-type (org-element-at-point)))))))
+      (should (eq 'paragraph (org-element-type (org-element-at-point))))))
+  ;; Remove/re-introduce heading.
+  (org-test-with-temp-text
+      "
+* 1
+** 1-1
+a
+<point>** 1-2
+a
+"
+    (let ((org-element-use-cache t))
+      (org-element-at-point (point-max))
+      (insert "FOO")
+      (should
+       (equal
+        "1-1"
+        (org-element-property
+         :title
+         (org-element-lineage (org-element-at-point) '(headline)))))
+      (insert "\n")
+      (should
+       (equal
+        "1"
+        (org-element-property
+         :title
+         (org-element-lineage (org-element-at-point) '(headline))))))))
 
 (provide 'test-org-element)
 

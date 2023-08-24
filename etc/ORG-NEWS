@@ -31,12 +31,6 @@ Now, ~org-store-link~ moves the stored link to front of the list of
 stored links.  This way, the link will show up first in the completion
 and when inserting all the stored links with ~org-insert-all-links~.
 
-The new behavior is controlled by new customization ~org-link-store-existing~.
-
-Users can set ~org-link-store-existing~ to nil to revert previous
-defaults.  The value of =store-duplicate= will force duplicate links
-in ~org-stored-links~.  The default value is =move-to-front=.
-
 *** Major changes and additions to Org API
 **** New term: "syntax node"
 
@@ -125,8 +119,8 @@ New functions to retrieve and set (via ~setf~) commonly used element properties:
 - =:end= :: ~org-element-end~
 - =:contents-begin= :: ~org-element-contents-begin~
 - =:contents-end= :: ~org-element-contents-end~
-- =:contents-post-affiliated= :: ~org-element-post-affiliated~
-- =:contents-post-blank= :: ~org-element-post-blank~
+- =:post-affiliated= :: ~org-element-post-affiliated~
+- =:post-blank= :: ~org-element-post-blank~
 - =:parent= :: ~org-element-parent~
 
 ***** New macro ~org-element-with-enabled-cache~
@@ -311,6 +305,11 @@ setting the ~STYLE~ property for each sub-task.
 The change is breaking when ~org-use-property-inheritance~ is set to ~t~.
 
 ** New and changed options
+*** ~org-export-smart-quotes-alist~ is now a custom option
+
+Previously, smart quotes rules for different languages where
+hard-coded.  Now, they can be customized by users.
+
 *** Commands affected by ~org-fold-catch-invisible-edits~ can now be customized
 
 New user option ~org-fold-catch-invisible-edits-commands~ controls
@@ -492,6 +491,14 @@ Final hooks are added to the following commands:
 
 The prefix arguments are passed to ~org-insert-todo-heading~.
 
+*** Make ~ob-sqlite~ use in-memory databases by default
+
+~sqlite~ source blocks with no ~:db~ header argument now make SQLite
+use a temporary in-memory database instead of throwing an error,
+matching the behavior of the official ~sqlite3~ shell.  As a result,
+~sqlite~ source blocks are now usable out of the box, that is with no
+header arguments.
+
 *** Add support for ~logind~ idle time in ~org-user-idle-seconds~
 
 When Emacs is built with =dbus= support and
@@ -568,6 +575,23 @@ common (BASIC?  Pascal?  SQL?) ~<>~.  And it supports starred versions
 of all relational operators (~<*~, ~=*~, ~!=*~, etc.) that work like
 the regular, unstarred operators but match a headline only if the
 tested property is actually present.
+
+*** =ob-python.el=: Support for more result types and plotting
+
+=ob-python= now converts the following objects to org-mode tables when
+":results table" header arg is set:
+
+- Dictionaries
+- Numpy arrays
+- Pandas DataFrames
+- Pandas Series
+
+When the header argument =:results graphics= is set, =ob-python= will
+use matplotlib to save graphics. The behavior depends on whether value
+or output results are used. For value results, the last line should
+return a matplotlib Figure object to plot. For output results, the
+current figure (as returned by =pyplot.gcf()=) is cleared before
+evaluation, and then plotted afterwards.
 
 ** New functions and changes in function arguments
 *** =TYPES= argument in ~org-element-lineage~ can now be a symbol
@@ -888,6 +912,11 @@ After:
 
 
 ** New features
+*** Column view: new commands to move rows up & down
+You can move rows up & down in column view with
+~org-columns-move-row-up~ and ~org-columns-move-row-down~.
+Keybindings are the same as ~org-move-subtree-up~ and ~org-move-subtree-down~
+=M-<up>= and =M-<down>=.
 *** Clock table can now produce quarterly reports
 
 =:step= clock table parameter can now be set to =quarter=.

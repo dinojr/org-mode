@@ -609,8 +609,8 @@ OBJECT is the object to consider."
     :buffer)
   "List of element properties used internally by cache.")
 
-(defvar org-element--string-cache (obarray-make)
-  "Obarray holding tag strings and todo keyword objects.
+(defvar org-element--string-cache (make-hash-table :test #'equal)
+  "Hash table holding tag strings and todo keyword objects.
 We use shared string storage to reduce memory footprint of the syntax
 tree.")
 
@@ -618,7 +618,8 @@ tree.")
   "Return cached object equal to STRING.
 Return nil if STRING is nil."
   (when string
-    (symbol-name (intern string org-element--string-cache))))
+    (or (gethash string org-element--string-cache)
+        (puthash string string org-element--string-cache))))
 
 (defun org-element--substring (element beg-offset end-offset)
   "Get substring inside ELEMENT according to BEG-OFFSET and END-OFFSET."
@@ -1217,10 +1218,7 @@ Assume point is at beginning of the headline."
 			     (forward-line)
 			     (skip-chars-forward " \r\t\n" end)
 			     (and (/= (point) end) (line-beginning-position))))
-	   (contents-end (and contents-begin
-			      (progn (goto-char end)
-				     (skip-chars-backward " \r\t\n")
-				     (line-beginning-position 2))))
+	   (contents-end (and contents-begin end))
            (robust-begin
             ;; If there is :pre-blank, we
             ;; need to be careful about
@@ -1228,10 +1226,7 @@ Assume point is at beginning of the headline."
             (when contents-begin
               (when (< (+ 2 contents-begin) contents-end)
                 (+ 2 contents-begin))))
-           (robust-end (and robust-begin
-                            (when (> (- contents-end 2) robust-begin)
-                              (- contents-end 2)))))
-      (unless robust-end (setq robust-begin nil))
+           (robust-end (and robust-begin end)))
       (org-element-create
        'headline
        (list
@@ -1255,7 +1250,9 @@ Assume point is at beginning of the headline."
 	:todo-type deferred-title-prop
 	:post-blank
 	(if contents-end
-	    (count-lines contents-end end)
+            ;; Trailing blank lines in org-data, headlines, and
+            ;; sections belong to the containing elements.
+	    0
 	  (1- (count-lines begin end)))
 	:footnote-section-p deferred-title-prop
 	:archivedp deferred-title-prop
@@ -1377,31 +1374,29 @@ Return a new syntax node of `org-data' type containing `:begin',
                             (forward-line 0)
                             (point)))
 	  (end (point-max))
-	  (pos-before-blank (progn (goto-char (point-max))
-                                   (skip-chars-backward " \r\t\n")
-                                   (line-beginning-position 2)))
-          (robust-end (when (> (- pos-before-blank 2) contents-begin)
-                        (- pos-before-blank 2)))
+          (contents-end end)
+          (robust-end contents-end)
           (robust-begin (when (and robust-end
-                                   (< (+ 2 contents-begin) pos-before-blank))
+                                   (< (+ 2 contents-begin) end))
                           (or
                            (org-with-wide-buffer
                             (goto-char (point-min))
                             (while (and (org-at-comment-p) (bolp)) (forward-line))
                             (when (looking-at org-property-drawer-re)
                               (goto-char (match-end 0))
-                              (skip-chars-backward " \t")
                               (min robust-end (point))))
                            (+ 2 contents-begin)))))
      (org-element-create
       'org-data
       (list :begin begin
             :contents-begin contents-begin
-            :contents-end pos-before-blank
+            :contents-end contents-end
             :end end
             :robust-begin robust-begin
             :robust-end robust-end
-            :post-blank (count-lines pos-before-blank end)
+            ;; Trailing blank lines in org-data, headlines, and
+            ;; sections belong to the containing elements.
+            :post-blank 0
             :post-affiliated begin
             :path (buffer-file-name)
             :mode 'org-data
@@ -1523,8 +1518,8 @@ CONTENTS is the contents of inlinetask."
 
 ;;;; Item
 
-(defun org-element-item-parser (_ struct &optional raw-secondary-p)
-  "Parse an item.
+(defun org-element-item-parser (limit struct &optional raw-secondary-p)
+  "Parse an item up to LIMIT.
 
 STRUCT is the structure of the plain list.
 
@@ -1550,7 +1545,8 @@ Assume point is at the beginning of the item."
 			     ((equal "[X]" box) 'on)
 			     ((equal "[-]" box) 'trans))))
 	   (end (progn (goto-char (nth 6 (assq (point) struct)))
-		       (if (bolp) (point) (line-beginning-position 2))))
+		       (min limit
+                            (if (bolp) (point) (line-beginning-position 2)))))
 	   (pre-blank 0)
 	   (contents-begin
 	    (progn
@@ -1765,6 +1761,9 @@ Assume point is at the beginning of the list."
 				       (= (nth 1 item) ind))
 			     (setq pos (nth 6 item)))
 			   pos))
+           (contents-end (progn (goto-char contents-end)
+                                (skip-chars-backward " \r\t\n")
+                                (if (bolp) (point) (line-beginning-position 2))))
 	   (end (progn (goto-char contents-end)
 		       (skip-chars-forward " \r\t\n" limit)
 		       (if (= (point) limit) limit (line-beginning-position)))))
@@ -1786,6 +1785,7 @@ Assume point is at the beginning of the list."
   "Interpret plain-list element as Org syntax.
 CONTENTS is the contents of the element."
   (with-temp-buffer
+    (org-mode)
     (insert contents)
     (goto-char (point-min))
     (org-list-repair)
@@ -1896,20 +1896,20 @@ Return a new syntax node of `section' type containing `:begin',
             (if (re-search-forward (org-get-limited-outline-regexp t) nil 'move)
                 (goto-char (match-beginning 0))
 	      (point)))
-	   (pos-before-blank (progn (skip-chars-backward " \r\t\n")
-				    (line-beginning-position 2)))
-           (robust-end (when (> (- pos-before-blank 2) begin)
-                         (- pos-before-blank 2)))
-           (robust-begin (when robust-end begin)))
+	   (contents-end end)
+           (robust-end end)
+           (robust-begin begin))
       (org-element-create
        'section
        (list :begin begin
 	     :end end
 	     :contents-begin begin
-	     :contents-end pos-before-blank
+	     :contents-end contents-end
              :robust-begin robust-begin
              :robust-end robust-end
-	     :post-blank (count-lines pos-before-blank end)
+             ;; Trailing blank lines in org-data, headlines, and
+             ;; sections belong to the containing elements.
+	     :post-blank 0
 	     :post-affiliated begin)))))
 
 (defun org-element-section-interpreter (_ contents)
@@ -3334,13 +3334,14 @@ Assume point is at the beginning of the snippet."
                  (- contents-end begin))))
 	     (post-blank (skip-chars-forward " \t"))
 	     (end (point)))
-	(org-element-create
-         'export-snippet
-	 (list :back-end backend
-	       :value value
-	       :begin begin
-	       :end end
-	       :post-blank post-blank))))))
+        (when contents-end ; No match when no trailing "@@".
+	  (org-element-create
+           'export-snippet
+	   (list :back-end backend
+	         :value value
+	         :begin begin
+	         :end end
+	         :post-blank post-blank)))))))
 
 (defun org-element-export-snippet-interpreter (export-snippet _)
   "Interpret EXPORT-SNIPPET object as Org syntax."
@@ -5224,7 +5225,7 @@ If there is no affiliated keyword, return the empty string."
      ;; cannot belong to the property list.
      (let (acc)
        (org-element-properties-mapc
-        (lambda (prop _ _)
+        (lambda (prop _ __)
           (let  ((keyword (upcase (substring (symbol-name prop) 1))))
             (when (or (string-match-p "^ATTR_" keyword)
 		      (and
@@ -5421,6 +5422,11 @@ indentation removed from its contents."
 
 (defvar org-element-cache-persistent t
   "Non-nil when cache should persist between Emacs sessions.")
+
+(defconst org-element-cache-version "2.2"
+  "Version number for Org AST structure.
+Used to avoid loading obsolete AST representation when using
+`org-element-cache-persistent'.")
 
 (defvar org-element-cache-sync-idle-time 0.6
   "Length, in seconds, of idle time before syncing cache.")
@@ -6562,19 +6568,6 @@ If this warning appears regularly, please report the warning text to Org mode ma
      org-element--cache-size
      (let ((print-level 2)) (prin1-to-string org-element--cache-sync-requests)))))
 
-(defsubst org-element--open-end-p (element)
-  "Check if ELEMENT in current buffer contains extra blank lines after
-it and does not have closing term.
-
-Examples of such elements are: section, headline, org-data,
-and footnote-definition."
-  (and (org-element-contents-end element)
-       (= (org-element-contents-end element)
-          (save-excursion
-            (goto-char (org-element-end element))
-            (skip-chars-backward " \r\n\t")
-            (line-beginning-position 2)))))
-
 (defun org-element--headline-parent-deferred (headline)
   "Parse parent for HEADLINE."
   (with-current-buffer (org-element-property :buffer headline)
@@ -6784,29 +6777,16 @@ If you observe Emacs hangs frequently, please report this to Org mode mailing li
                                   ;; lines after, it is a special case:
                                   ;; 1. At the end of buffer we return
                                   ;; the innermost element.
+                                  (= pos cend (point-max))
                                   ;; 2. At cend of element with return
-                                  ;; that element.
-                                  ;; 3. At the end of element, we would
-                                  ;; return in the earlier cond form.
-                                  ;; 4. Within blank lines after cend,
-                                  ;; when element does not have a
-                                  ;; closing keyword, we return that
-                                  ;; outermost element, unless the
-                                  ;; outermost element is a non-empty
-                                  ;; headline.  In the latter case, we
-                                  ;; return the outermost element inside
-                                  ;; the headline section.
-			          (and (org-element--open-end-p element)
-                                       (or (= (org-element-end element) (point-max))
-                                           (and (>= pos (org-element-contents-end element))
-                                                (org-element-type-p element '(org-data section headline)))))))
+                                  ;; that element (thus, no need to
+                                  ;; parse inside).
+                                  nil))
 		     (goto-char (or next cbeg))
 		     (setq mode (if next mode (org-element--next-mode mode type t))
                            next nil
 		           parent element
-		           end (if (org-element--open-end-p element)
-                                   (org-element-end element)
-                                 (org-element-contents-end element))))))
+		           end (org-element-contents-end element)))))
 	        ;; Otherwise, return ELEMENT as it is the smallest
 	        ;; element containing POS.
 	        (t (throw 'exit (if syncp parent element)))))
@@ -6843,19 +6823,7 @@ The function returns the new value of `org-element--cache-change-warning'."
        (setq org-element--cache-last-buffer-size (buffer-size))
        (goto-char beg)
        (forward-line 0)
-       (let ((bottom (save-excursion
-                       (goto-char end)
-                       (if (and (bolp)
-                                ;; When beg == end, still extent to eol.
-                                (> (point) beg))
-                           ;; FIXME: Potential pitfall.
-                           ;; We are appending to an element end.
-                           ;; Unless the last inserted char is not
-                           ;; newline, the next element is not broken
-                           ;; and does not need to be purged from the
-                           ;; cache.
-                           end
-                         (line-end-position)))))
+       (let ((bottom (save-excursion (goto-char end) (line-end-position))))
          (prog1
              ;; Use the worst change warning to not miss important edits.
              ;; This function is called before edit and after edit by
@@ -7467,12 +7435,12 @@ the cache persistence in the buffer."
           (when (and org-element-cache-persistent
                      (buffer-file-name (current-buffer)))
             (org-persist-register
-             '((elisp org-element--cache) (version "2.0"))
+             `((elisp org-element--cache) (version ,org-element-cache-version))
              (current-buffer))
             (org-persist-register
              'org-element--headline-cache
              (current-buffer)
-             :inherit '((elisp org-element--cache) (version "2.0")))))
+             :inherit `((elisp org-element--cache) (version ,org-element-cache-version)))))
         (setq-local org-element--cache-change-tic (buffer-chars-modified-tick))
         (setq-local org-element--cache-last-buffer-size (buffer-size))
         (setq-local org-element--cache-gapless nil)
@@ -7609,7 +7577,8 @@ the cache."
       (let ((mk (make-marker)))
         (set-marker mk to-pos)
         (setq to-pos mk)))
-    (let (;; Bind variables used inside loop to avoid memory
+    (let ((gc-cons-threshold #x40000000)
+          ;; Bind variables used inside loop to avoid memory
           ;; re-allocation on every iteration.
           ;; See https://emacsconf.org/2021/talks/faster/
           tmpnext-start tmpparent tmpelement)
@@ -8074,13 +8043,16 @@ This function may modify the match data."
   (if (org-element-type epom t) epom
     (setq epom (or epom (point)))
     (org-with-point-at epom
+      (unless (derived-mode-p 'org-mode)
+        (error "`org-element-at-point' cannot be used in non-Org buffer %S (%s)"
+               (current-buffer) major-mode))
       ;; Allow re-parsing when the command can benefit from it.
       (when (and cached-only
                  (memq this-command org-element--cache-non-modifying-commands))
         (setq cached-only nil))
       (let (element)
         (when (org-element--cache-active-p)
-          (if (not org-element--cache) (org-element-cache-reset)
+          (if (not (org-with-base-buffer nil org-element--cache)) (org-element-cache-reset)
             (unless cached-only (org-element--cache-sync (current-buffer) epom))))
         (setq element (if cached-only
                           (when (and (org-element--cache-active-p)
@@ -8171,9 +8143,9 @@ This function may modify match data."
 	 (let ((case-fold-search t)) (looking-at org-element--affiliated-re))
 	 (cond
 	  ((not (member-ignore-case (match-string 1)
-				    org-element-parsed-keywords))
+				  org-element-parsed-keywords))
 	   (throw 'objects-forbidden element))
-	  ((< (match-end 0) pos)
+	  ((<= (match-end 0) pos)
 	   (narrow-to-region (match-end 0) (line-end-position)))
 	  ((and (match-beginning 2)
 		(>= pos (match-beginning 2))

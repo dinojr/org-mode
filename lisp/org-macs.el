@@ -110,6 +110,7 @@ Version mismatch is commonly encountered in the following situations:
 (declare-function org-fold-folded-p "org-fold" (&optional pos limit ignore-hidden-p previous-p))
 (declare-function string-collate-lessp "org-compat" (s1 s2 &optional locale ignore-case))
 (declare-function org-time-convert-to-list "org-compat" (time))
+(declare-function org-buffer-text-pixel-width "org-compat" ())
 
 (defvar org-ts-regexp0)
 (defvar ffap-url-regexp)
@@ -1117,9 +1118,9 @@ Return width in pixels when PIXELS is non-nil."
                  result)))
           (current-char-property-alias-alist char-property-alias-alist))
       (with-current-buffer (get-buffer-create " *Org string width*")
-        (setq-local display-line-numbers nil
-                    line-prefix nil
-                    wrap-prefix nil)
+        (setq-local display-line-numbers nil)
+        (setq-local line-prefix nil)
+        (setq-local wrap-prefix nil)
         (setq-local buffer-invisibility-spec
                     (if (listp current-invisibility-spec)
                         (mapcar (lambda (el)

@@ -675,16 +675,31 @@ optional argument MARKERP, return the position as a new marker."
    ((not (file-exists-p file)) nil)
    (t
     (let* ((visiting (find-buffer-visiting file))
-	   (buffer (or visiting (find-file-noselect file))))
+	   (buffer (or visiting
+                       (if markerp (find-file-noselect file)
+                         (if (<= 2 (cdr (func-arity #'get-buffer-create)))
+                             (with-no-warnings (get-buffer-create " *Org ID temp*" t))
+                           ;; FIXME: Emacs 27 does not yet have second argument.
+                           (get-buffer-create " *Org ID temp*"))))))
       (unwind-protect
 	  (with-current-buffer buffer
+            (unless (derived-mode-p 'org-mode) (org-mode))
+            (unless (or visiting markerp)
+              (buffer-disable-undo)
+              ;; FIXME: In Emacs 27, `insert-file-contents' seemingly
+              ;; does not trigger modification hooks in some
+              ;; scenarios.  This is manifested in test failures due
+              ;; to element cache losing track of the modifications.
+              (org-element-cache-reset)
+              (insert-file-contents file nil nil nil 'replace))
 	    (let ((pos (org-find-entry-with-id id)))
 	      (cond
 	       ((null pos) nil)
 	       (markerp (move-marker (make-marker) pos buffer))
 	       (t (cons file pos)))))
-	;; Remove opened buffer in the process.
-	(unless (or visiting markerp) (kill-buffer buffer)))))))
+	;; Clean temporarily buffer if we don't need to keep it.
+	(unless (or visiting markerp)
+          (with-current-buffer buffer (erase-buffer))))))))
 
 ;; id link type
 

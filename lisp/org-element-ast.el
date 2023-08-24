@@ -334,12 +334,13 @@ need to re-read the value again."
 (eval-and-compile ; make available during inline expansion
 
   (defconst org-element--standard-properties
-    '( :begin :end :contents-begin :contents-end
-       :post-blank :post-affiliated :secondary
+    '( :begin :post-affiliated :contents-begin :contents-end :end :post-blank
+       :secondary :mode :granularity
        :cached :org-element--cache-sync-key
        :robust-begin :robust-end
-       :mode :granularity :true-level
-       :parent :deferred :structure :buffer)
+       :true-level
+       :buffer :deferred
+       :structure :parent)
     "Standard properties stored in every syntax node structure.
 These properties are stored in an array pre-allocated every time a new
 object is created.  Two exceptions are `anonymous' and `plain-text'
@@ -393,12 +394,18 @@ Ignore standard property array."
        (`plain-text
         (or (get-text-property 0 ,property ,node)
             (when ,dflt
-              (if (plist-member (text-properties-at 0 ,node) ,property)
+              (if
+                  ;; FIXME: Byte-compiler throws false positives in Emacs 27.
+                  (with-no-warnings
+                    (plist-member (text-properties-at 0 ,node) ,property))
                   nil ,dflt))))
        (_
         (or (plist-get (nth 1 ,node) ,property)
             (when ,dflt
-              (if (plist-member (nth 1 ,node) ,property)
+              (if
+                  ;; FIXME: Byte-compiler throws false positives in Emacs 27.
+                  (with-no-warnings
+                    (plist-member (nth 1 ,node) ,property))
                   nil ,dflt))))))))
 
 (define-inline org-element-property-raw (property node &optional dflt)
