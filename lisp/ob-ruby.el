@@ -73,7 +73,7 @@ It's possible to override it by using a header argument `:ruby'")
   :type 'symbol)
 
 (defun org-babel-execute:ruby (body params)
-  "Execute a block of Ruby code with Babel.
+  "Execute Ruby BODY according to PARAMS.
 This function is called by `org-babel-execute-src-block'."
   (let* ((session (org-babel-ruby-initiate-session
 		   (cdr (assq :session params)) params))
@@ -127,7 +127,8 @@ This function is called by `org-babel-execute-src-block'."
 ;; helper functions
 
 (defun org-babel-variable-assignments:ruby (params)
-  "Return list of ruby statements assigning the block's variables."
+  "Return list of ruby statements assigning the block's variables.
+The assignments are defined in PARAMS."
   (mapcar
    (lambda (pair)
      (format "%s=%s"
@@ -140,7 +141,7 @@ This function is called by `org-babel-execute-src-block'."
 Convert an elisp value into a string of ruby source code
 specifying a variable of the same value."
   (if (listp var)
-      (concat "[" (mapconcat #'org-babel-ruby-var-to-ruby var ", ") "]")
+      (concat "[" (mapconcat #'org-babel-ruby-var-to-ruby var ", \n") "]")
     (if (eq var 'hline)
 	org-babel-ruby-hline-to
       (format "%S" var))))
@@ -165,7 +166,8 @@ Emacs-lisp table, otherwise return the results as a string."
 (defun org-babel-ruby-initiate-session (&optional session params)
   "Initiate a ruby session.
 If there is not a current inferior-process-buffer in SESSION
-then create one.  Return the initialized session."
+then create one.  Return the initialized session.
+Session settings (`:ruby' header arg value) are taken from PARAMS."
   (unless (string= session "none")
     (org-require-package 'inf-ruby)
     (let* ((command (cdr (or (assq :ruby params)
@@ -192,7 +194,7 @@ then create one.  Return the initialized session."
                 (setq-local comint-prompt-regexp (concat "^" org-babel-ruby-prompt))
                 (insert org-babel-ruby-define-prompt ";")
                 (insert "_org_prompt_mode=conf.prompt_mode;conf.prompt_mode=:CUSTOM;")
-                (insert "conf.echo=false")
+                (insert "conf.echo=false\n")
                 (comint-send-input nil t)))
             session-buffer)
 	(sit-for .5)
@@ -289,7 +291,7 @@ return the value of the last statement in BODY, as elisp."
 		"results=_" "require 'pp'" "orig_out = $stdout"
 		(format org-babel-ruby-pp-f-write
 			(org-babel-process-file-name tmp-file 'noquote))))
-	     (list org-babel-ruby-eoe-indicator)))
+	     (list (format "puts \"%s\"" org-babel-ruby-eoe-indicator))))
 	   (comint-send-input nil t))
 	 (org-babel-eval-read-file tmp-file))))))
 

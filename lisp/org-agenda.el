@@ -3124,10 +3124,10 @@ Agenda views are separated by `org-agenda-block-separator'."
 			  "Press key for an agenda command:
 --------------------------------        <   Buffer, subtree/region restriction
 a   Agenda for current week or day      >   Remove restriction
-t   List of all TODO entries            e   Export agenda views
-m   Match a TAGS/PROP/TODO query        T   Entries with special TODO kwd
-s   Search for keywords                 M   Like m, but only TODO entries
-/   Multi-occur                         S   Like s, but only TODO entries
+/   Multi-occur                         e   Export agenda views
+t   List of all TODO entries            T   Entries with special TODO kwd
+m   Match a TAGS/PROP/TODO query        M   Like m, but only TODO entries
+s   Search for keywords                 S   Like s, but only TODO entries
 ?   Find :FLAGGED: entries              C   Configure custom agenda commands
 *   Toggle sticky agenda views          #   List stuck projects (!=configure)
 "))
@@ -5836,7 +5836,7 @@ displayed in agenda view."
       ;; ignore clock entries.
       (catch :skip
 	(save-match-data
-	  (when (or (org-at-date-range-p)
+	  (when (or (org-at-date-range-p t)
 		    (org-at-planning-p)
 		    (org-before-first-heading-p)
 		    (and org-agenda-include-inactive-timestamps
@@ -6122,7 +6122,7 @@ then those holidays will be skipped."
 	      statep (equal (string-to-char (match-string 1)) ?-)
 	      clockp (not (or closedp statep))
 	      state (and statep (match-string 2))
-	      category (org-get-category (match-beginning 0))
+	      category (save-match-data (org-get-category (match-beginning 0)))
 	      timestr (buffer-substring (match-beginning 0) (line-end-position))
               effort (save-match-data (or (get-text-property (point) 'effort)
                                           (org-entry-get (point) org-effort-property))))
@@ -6668,7 +6668,8 @@ scheduled items with an hour specification like [h]h:mm."
 		      (let ((deadline (time-to-days
                                        (when (org-element-property :deadline el)
                                          (org-time-string-to-time
-                                          (org-element-property :deadline el))))))
+                                          (org-element-interpret-data
+                                           (org-element-property :deadline el)))))))
 		        (and (<= schedule deadline) (> current deadline))))
 		     (`not-today pastschedp)
 		     (`t t)
@@ -6771,16 +6772,18 @@ scheduled items with an hour specification like [h]h:mm."
 		      'help-echo
 		      (format "mouse-2 or RET jump to org file %s"
 			      (abbreviate-file-name buffer-file-name))))
-	 (regexp org-tr-regexp)
+	 (regexp (if org-agenda-include-inactive-timestamps
+                     org-tr-regexp-both org-tr-regexp))
 	 (d0 (calendar-absolute-from-gregorian date))
          face marker hdmarker ee txt d1 d2 s1 s2 category level
 	 todo-state tags pos head donep inherited-tags effort
-	 effort-minutes)
+	 effort-minutes inactive?)
     (goto-char (point-min))
     (while (re-search-forward regexp nil t)
       (catch :skip
 	(org-agenda-skip)
 	(setq pos (point))
+        (setq inactive? (eq ?\[ (char-after (match-beginning 0))))
 	(let ((start-time (match-string 1))
 	      (end-time (match-string 2)))
 	  (setq s1 (match-string 1)
@@ -6844,10 +6847,12 @@ scheduled items with an hour specification like [h]h:mm."
 			    "<" (regexp-quote s2) ".*?>")
 			 nil)))
 		  (setq txt (org-agenda-format-item
-			     (format
-			      (nth (if (= d1 d2) 0 1)
-				   org-agenda-timerange-leaders)
-			      (1+ (- d0 d1)) (1+ (- d2 d1)))
+                             (concat
+                              (when inactive? org-agenda-inactive-leader)
+			      (format
+			       (nth (if (= d1 d2) 0 1)
+				    org-agenda-timerange-leaders)
+			       (1+ (- d0 d1)) (1+ (- d2 d1))))
 			     (org-add-props head nil
                                'effort effort
                                'effort-minutes effort-minutes)
@@ -7027,11 +7032,21 @@ Any match of REMOVE-RE will be removed from TXT."
 
 	;; Prepare the variables needed in the eval of the compiled format
 	(when org-prefix-has-breadcrumbs
-	  (setq breadcrumbs (org-with-point-at (org-get-at-bol 'org-marker)
-			      (let ((s (org-format-outline-path (org-get-outline-path)
-								(1- (frame-width))
-								nil org-agenda-breadcrumbs-separator)))
-				(if (equal "" s) "" (concat s org-agenda-breadcrumbs-separator))))))
+	  (setq breadcrumbs
+                ;; When called from Org buffer, remain in position.
+                ;; When called from Agenda buffer, jump to headline position first.
+                (org-with-point-at (org-get-at-bol 'org-marker)
+		  (let ((s (if (derived-mode-p 'org-mode)
+                               (org-format-outline-path (org-get-outline-path)
+						        (1- (frame-width))
+						        nil org-agenda-breadcrumbs-separator)
+                             ;; Not in Org buffer.  This can happen,
+                             ;; for example, in
+                             ;; `org-agenda-add-time-grid-maybe' where
+                             ;; time grid does not correspond to a
+                             ;; particular heading.
+                             "")))
+		    (if (equal "" s) "" (concat s org-agenda-breadcrumbs-separator))))))
 	(setq time (cond (s2 (concat
 			      (org-agenda-time-of-day-to-ampm-maybe s1)
 			      "-" (org-agenda-time-of-day-to-ampm-maybe s2)

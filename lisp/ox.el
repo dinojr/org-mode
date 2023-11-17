@@ -264,26 +264,13 @@ whose extension is either \"png\", \"jpeg\", \"jpg\", \"gif\",
 See `org-export-inline-image-p' for more information about
 rules.")
 
-(defconst org-export-ignored-local-variables
-  '( org-font-lock-keywords org-element--cache-change-tic
-     org-element--cache-change-tic org-element--cache-size
-     org-element--headline-cache-size
-     org-element--cache-sync-keys-value
-     org-element--cache-change-warning org-element--headline-cache
-     org-element--cache org-element--cache-sync-keys
-     org-element--cache-sync-requests org-element--cache-sync-timer)
-  "List of variables not copied through upon buffer duplication.
-Export process takes place on a copy of the original buffer.
-When this copy is created, all Org related local variables not in
-this list are copied to the new buffer.  Variables with an
-unreadable value are also ignored.")
-
 (defvar org-export-async-debug nil
   "Non-nil means asynchronous export process should leave data behind.
 
 This data is found in the appropriate \"*Org Export Process*\"
 buffer, and in files prefixed with \"org-export-process\" and
-located in `temporary-file-directory'.
+located in the directory defined by variable
+`temporary-file-directory'.
 
 When non-nil, it will also set `debug-on-error' to a non-nil
 value in the external process.")
@@ -2573,38 +2560,30 @@ Return the updated communication channel."
 ;; a default template (or a backend specific template) at point or in
 ;; current subtree.
 
+(defun org-export--set-variables (variable-alist)
+  "Set buffer-local variables according to VARIABLE-ALIST in current buffer."
+  (pcase-dolist (`(,var . ,val) variable-alist)
+    (set (make-local-variable var) val)))
+
 (cl-defun org-export-copy-buffer (&key to-buffer drop-visibility
                                        drop-narrowing drop-contents
                                        drop-locals)
   "Return a copy of the current buffer.
-The copy preserves Org buffer-local variables, visibility and
-narrowing.
+This function calls `org-element-copy-buffer', passing the same
+arguments TO-BUFFER, DROP-VISIBILITY, DROP-NARROWING, DROP-CONTENTS,
+and DROP-LOCALS.
 
-IMPORTANT: The buffer copy may also have `buffer-file-name' copied.
-To prevent Emacs overwriting the original buffer file,
-`write-contents-functions' is set to (always).  Do not alter this
-variable and do not do anything that might alter it (like calling a
-major mode) to prevent data corruption.  Also, do note that Emacs may
-jump into the created buffer if the original file buffer is closed and
-then re-opened.  Making edits in the buffer copy may also trigger
-Emacs save dialog.  Prefer using `org-export-with-buffer-copy' macro
-when possible.
-
-When optional key `:to-buffer' is non-nil, copy into BUFFER.
-
-Optional keys `:drop-visibility', `:drop-narrowing', `:drop-contents',
-and `:drop-locals' are passed to `org-export--generate-copy-script'."
-  (let ((copy-buffer-fun (org-export--generate-copy-script
-                          (current-buffer)
-                          :copy-unreadable 'do-not-check
-                          :drop-visibility drop-visibility
-                          :drop-narrowing drop-narrowing
-                          :drop-contents drop-contents
-                          :drop-locals drop-locals))
-	(new-buf (or to-buffer (generate-new-buffer (buffer-name)))))
-    (with-current-buffer new-buf
-      (funcall copy-buffer-fun)
-      (set-buffer-modified-p nil))
+In addition, buffer-local variables are set according to #+BIND:
+keywords."
+  (let ((new-buf (org-element-copy-buffer
+                  :to-buffer to-buffer
+                  :drop-visibility drop-visibility
+                  :drop-narrowing drop-narrowing
+                  :drop-contents drop-contents
+                  :drop-locals drop-locals)))
+    (let ((bind-variables (org-export--list-bound-variables)))
+      (with-current-buffer new-buf
+        (org-export--set-variables bind-variables)))
     new-buf))
 
 (cl-defmacro org-export-with-buffer-copy ( &rest body
@@ -2613,136 +2592,23 @@ and `:drop-locals' are passed to `org-export--generate-copy-script'."
                                            drop-locals
                                            &allow-other-keys)
   "Apply BODY in a copy of the current buffer.
-The copy preserves local variables, visibility and contents of
-the original buffer.  Point is at the beginning of the buffer
-when BODY is applied.
+This macro is like `org-element-with-buffer-copy', passing the same
+arguments BODY, TO-BUFFER, DROP-VISIBILITY, DROP-NARROWING,
+DROP-CONTENTS, and DROP-LOCALS.
 
-Optional keys can modify what is being copied and the generated buffer
-copy.  `:to-buffer', `:drop-visibility', `:drop-narrowing',
-`:drop-contents', and `:drop-locals' are passed as arguments to
-`org-export-copy-buffer'."
+In addition, buffer-local variables are set according to #+BIND:
+keywords."
   (declare (debug t))
-  (org-with-gensyms (buf-copy)
-    `(let ((,buf-copy (org-export-copy-buffer
-                       :to-buffer ,to-buffer
-                       :drop-visibility ,drop-visibility
-                       :drop-narrowing ,drop-narrowing
-                       :drop-contents ,drop-contents
-                       :drop-locals ,drop-locals)))
-       (unwind-protect
-	   (with-current-buffer ,buf-copy
-	     (goto-char (point-min))
-             (prog1
-	         (progn ,@body)
-               ;; `org-export-copy-buffer' carried the value of
-               ;; `buffer-file-name' from the original buffer.  When not
-               ;; killed, the new buffer copy may become a target of
-               ;; `find-file'.  Prevent this.
-               (setq buffer-file-name nil)))
-	 (and (buffer-live-p ,buf-copy)
-	      ;; Kill copy without confirmation.
-	      (progn (with-current-buffer ,buf-copy
-		       (restore-buffer-modified-p nil))
-                     (unless ,to-buffer
-		       (kill-buffer ,buf-copy))))))))
-
-(cl-defun org-export--generate-copy-script (buffer
-                                            &key
-                                            copy-unreadable
-                                            drop-visibility
-                                            drop-narrowing
-                                            drop-contents
-                                            drop-locals)
-  "Generate a function duplicating BUFFER.
-
-The copy will preserve local variables, visibility, contents and
-narrowing of the original buffer.  If a region was active in
-BUFFER, contents will be narrowed to that region instead.
-
-When optional key `:copy-unreadable' is non-nil, do not ensure that all
-the copied local variables will be readable in another Emacs session.
-
-When optional keys `:drop-visibility', `:drop-narrowing',
-`:drop-contents', or `:drop-locals' are non-nil, do not preserve
-visibility, narrowing, contents, or local variables correspondingly.
-
-The resulting function can be evaluated at a later time, from
-another buffer, effectively cloning the original buffer there.
-
-The function assumes BUFFER's major mode is `org-mode'."
-  (with-current-buffer buffer
-    (let ((str (unless drop-contents (org-with-wide-buffer (buffer-string))))
-          (narrowing
-           (unless drop-narrowing
-             (if (org-region-active-p)
-	         (list (region-beginning) (region-end))
-	       (list (point-min) (point-max)))))
-	  (pos (point))
-	  (varvals
-           (unless drop-locals
-	     (let ((bound-variables (org-export--list-bound-variables))
-		   (varvals nil))
-	       (dolist (entry (buffer-local-variables (buffer-base-buffer)))
-	         (when (consp entry)
-		   (let ((var (car entry))
-		         (val (cdr entry)))
-		     (and (not (memq var org-export-ignored-local-variables))
-			  (or (memq var
-				    '(default-directory
-                                       ;; Required to convert file
-                                       ;; links in the #+INCLUDEd
-                                       ;; files.  See
-                                       ;; `org-export--prepare-file-contents'.
-				       buffer-file-name
-				       buffer-file-coding-system
-                                       ;; Needed to preserve folding state
-                                       char-property-alias-alist))
-			      (assq var bound-variables)
-			      (string-match "^\\(org-\\|orgtbl-\\)"
-					    (symbol-name var)))
-			  ;; Skip unreadable values, as they cannot be
-			  ;; sent to external process.
-			  (or copy-unreadable (not val)
-                              (ignore-errors (read (format "%S" val))))
-			  (push (cons var val) varvals)))))
-               varvals)))
-	  (ols
-           (unless drop-visibility
-	     (let (ov-set)
-	       (dolist (ov (overlays-in (point-min) (point-max)))
-	         (let ((invis-prop (overlay-get ov 'invisible)))
-		   (when invis-prop
-		     (push (list (overlay-start ov) (overlay-end ov)
-			         invis-prop)
-			   ov-set))))
-	       ov-set))))
-      (lambda ()
-	(let ((inhibit-modification-hooks t))
-	  ;; Set major mode. Ignore `org-mode-hook' and other hooks as
-	  ;; they have been run already in BUFFER.
-          (unless (eq major-mode 'org-mode)
-            (delay-mode-hooks
-              (let ((org-inhibit-startup t)) (org-mode))))
-	  ;; Copy specific buffer local variables and variables set
-	  ;; through BIND keywords.
-	  (pcase-dolist (`(,var . ,val) varvals)
-	    (set (make-local-variable var) val))
-	  ;; Whole buffer contents when requested.
-          (when str (erase-buffer) (insert str))
-          ;; Make org-element-cache not complain about changed buffer
-          ;; state.
-          (org-element-cache-reset nil 'no-persistence)
-	  ;; Narrowing.
-          (when narrowing
-	    (apply #'narrow-to-region narrowing))
-	  ;; Current position of point.
-	  (goto-char pos)
-	  ;; Overlays with invisible property.
-	  (pcase-dolist (`(,start ,end ,invis) ols)
-	    (overlay-put (make-overlay start end) 'invisible invis))
-          ;; Never write the buffer copy to disk, despite
-          ;; `buffer-file-name' not being nil.
-          (setq write-contents-functions (list (lambda (&rest _) t))))))))
+  (org-with-gensyms (bind-variables)
+    `(let ((,bind-variables (org-export--list-bound-variables)))
+       (org-element-with-buffer-copy
+        :to-buffer ,to-buffer
+        :drop-visibility ,drop-visibility
+        :drop-narrowing ,drop-narrowing
+        :drop-contents ,drop-contents
+        :drop-locals ,drop-locals
+        (org-export--set-variables ,bind-variables)
+        ,@body))))
 
 (defun org-export--delete-comment-trees ()
   "Delete commented trees and commented inlinetasks in the buffer.
@@ -3463,20 +3329,17 @@ provided as the :unmatched parameter."
                  (setq value (replace-match "" nil nil value)))))
          (file
           (and (string-match "^\\(\".+?\"\\|\\S-+\\)\\(?:\\s-+\\|$\\)" value)
-               (prog1
-                   (save-match-data
-                     (let ((matched (match-string 1 value))
-                           stripped)
-                       (when (string-match "\\(::\\(.*?\\)\\)\"?\\'"
-                                           matched)
-                         (setq location (match-string 2 matched))
-                         (setq matched
-                               (replace-match "" nil nil matched 1)))
-                       (setq stripped (org-strip-quotes matched))
-                       (if (org-url-p stripped)
-                           stripped
-                         (expand-file-name stripped dir))))
-                 (setq value (replace-match "" nil nil value)))))
+               (let ((matched (match-string 1 value)) stripped)
+                 (setq value (replace-match "" nil nil value))
+                 (when (string-match "\\(::\\(.*?\\)\\)\"?\\'"
+                                     matched)
+                   (setq location (match-string 2 matched))
+                   (setq matched
+                         (replace-match "" nil nil matched 1)))
+                 (setq stripped (org-strip-quotes matched))
+                 (if (org-url-p stripped)
+                     stripped
+                   (expand-file-name stripped dir)))))
          (only-contents
           (and (string-match ":only-contents *\\([^: \r\t\n]\\S-*\\)?"
                              value)
@@ -3739,7 +3602,7 @@ is to happen."
 	    (while (re-search-forward org-link-any-re nil t)
 	      (let ((link (save-excursion
 			    (forward-char -1)
-			    (save-match-data (org-element-context)))))
+			    (org-element-context))))
 		(when (org-element-type-p link 'link)
 		  ;; Look for file links within link's description.
 		  ;; Org doesn't support such construct, but
@@ -4548,13 +4411,14 @@ A search cell follows the pattern (TYPE . SEARCH) where
     - NAME or RESULTS affiliated keyword if TYPE is `other'.
 
 A search cell is the internal representation of a fuzzy link.  It
-ignores white spaces and statistics cookies, if applicable."
+ignores case, white spaces, and statistics cookies, if applicable."
   (pcase (org-element-type datum)
     (`headline
-     (let ((title (split-string
-		   (replace-regexp-in-string
-		    "\\[[0-9]*\\(?:%\\|/[0-9]*\\)\\]" " "
-		    (org-element-property :raw-value datum)))))
+     (let ((title (mapcar #'upcase
+                          (split-string
+		           (replace-regexp-in-string
+		            "\\[[0-9]*\\(?:%\\|/[0-9]*\\)\\]" " "
+		            (org-element-property :raw-value datum))))))
        (delq nil
 	     (list
 	      (cons 'headline title)
@@ -4562,7 +4426,9 @@ ignores white spaces and statistics cookies, if applicable."
 	      (let ((custom-id (org-element-property :custom-id datum)))
 		(and custom-id (cons 'custom-id custom-id)))))))
     (`target
-     (list (cons 'target (split-string (org-element-property :value datum)))))
+     (list (cons 'target
+                 (mapcar #'upcase
+                         (split-string (org-element-property :value datum))))))
     ((and (let name (or (org-element-property :name datum)
                         (car (org-element-property :results datum))))
 	  (guard name))
@@ -4573,12 +4439,19 @@ ignores white spaces and statistics cookies, if applicable."
   "Return search cells associated to string S.
 S is either the path of a fuzzy link or a search option, i.e., it
 tries to match either a headline (through custom ID or title),
-a target or a named element."
+a target or a named element.
+
+The title match is case-insensitive."
   (pcase (string-to-char s)
-    (?* (list (cons 'headline (split-string (substring s 1)))))
+    (?* (list (cons 'headline (mapcar #'upcase (split-string (substring s 1))))))
     (?# (list (cons 'custom-id (substring s 1))))
     ((let search (split-string s))
-     (list (cons 'target search) (cons 'other search)))))
+     (cl-remove-duplicates
+      (list (cons 'target search)
+            (cons 'other search)
+            (cons 'target (mapcar #'upcase search))
+            (cons 'other (mapcar #'upcase search)))
+      :test #'equal))))
 
 (defun org-export-match-search-cell-p (datum cells)
   "Non-nil when DATUM matches search cells CELLS.
@@ -6218,7 +6091,7 @@ them."
      ("ja" :default "次ページに続く")
      ("nl" :default "Vervolg op volgende pagina")
      ("nn" :default "Held fram på neste side")
-     ("pl" :default "Kontynuacja na następnej stronie")
+     ("pl" :default "Ciąg dalszy na następnej stronie")
      ("pt" :default "Continua na página seguinte")
      ("pt_BR" :html "Continua na pr&oacute;xima p&aacute;gina" :ascii "Continua na proxima pagina" :default "Continua na próxima página")
      ("ro" :default "Continuare pe pagina următoare")
@@ -6232,6 +6105,7 @@ them."
      ("fa" :default "ساخته شده")
      ("nl" :default "Gemaakt op")  ;; must be followed by a date or date+time
      ("nn" :default "Oppretta")
+     ("pl" :default "Wygenerowano o") ; must be followed by a date or date+time
      ("pt_BR" :default "Criado em")
      ("ro" :default "Creat")
      ("sl" :default "Ustvarjeno")
@@ -6281,6 +6155,7 @@ them."
      ("no" :default "Ligning")
      ("nb" :default "Ligning")
      ("nn" :default "Likning")
+     ("pl" :default "Równanie" :ascii "Rownanie")
      ("pt_BR" :html "Equa&ccedil;&atilde;o" :default "Equação" :ascii "Equacao")
      ("ro" :default "Ecuația")
      ("ru" :html "&#1059;&#1088;&#1072;&#1074;&#1085;&#1077;&#1085;&#1080;&#1077;"
@@ -6304,6 +6179,7 @@ them."
      ("no" :default "Illustrasjon")
      ("nb" :default "Illustrasjon")
      ("nn" :default "Illustrasjon")
+     ("pl" :default "Obrazek") ; alternativly "Rysunek"
      ("pt_BR" :default "Figura")
      ("ro" :default "Imaginea")
      ("ru" :html "&#1056;&#1080;&#1089;&#1091;&#1085;&#1086;&#1082;" :utf-8 "Рисунок")
@@ -6326,6 +6202,7 @@ them."
      ("no" :default "Illustrasjon %d")
      ("nb" :default "Illustrasjon %d")
      ("nn" :default "Illustrasjon %d")
+     ("pl" :default "Obrazek %d") ; alternativly "Rysunek %d"
      ("pt_BR" :default "Figura %d:")
      ("ro" :default "Imaginea %d:")
      ("ru" :html "&#1056;&#1080;&#1089;. %d.:" :utf-8 "Рис. %d.:")
@@ -6378,6 +6255,7 @@ them."
      ("nn" :default "Programliste")
      ("no" :default "Dataprogrammer")
      ("nb" :default "Dataprogrammer")
+     ("pl" :default "Indeks") ; probably too vague but better than nothing
      ("pt_BR" :html "&Iacute;ndice de Listagens" :default "Índice de Listagens" :ascii "Indice de Listagens")
      ("ru" :html "&#1057;&#1087;&#1080;&#1089;&#1086;&#1082; &#1088;&#1072;&#1089;&#1087;&#1077;&#1095;&#1072;&#1090;&#1086;&#1082;"
       :utf-8 "Список распечаток")
@@ -6401,6 +6279,7 @@ them."
      ("no" :default "Tabeller")
      ("nb" :default "Tabeller")
      ("nn" :default "Tabeller")
+     ("pl" :default "Indeks tabel")
      ("pt_BR" :html "&Iacute;ndice de Tabelas" :default "Índice de Tabelas" :ascii "Indice de Tabelas")
      ("ro" :default "Tabele")
      ("ru" :html "&#1057;&#1087;&#1080;&#1089;&#1086;&#1082; &#1090;&#1072;&#1073;&#1083;&#1080;&#1094;"
@@ -6424,6 +6303,7 @@ them."
      ("nn" :default "Program")
      ("no" :default "Dataprogram")
      ("nb" :default "Dataprogram")
+     ("pl" :default "Indeks")
      ("pt_BR" :default "Listagem")
      ("ro" :default "Lista")
      ("ru" :html "&#1056;&#1072;&#1089;&#1087;&#1077;&#1095;&#1072;&#1090;&#1082;&#1072;"
@@ -6448,6 +6328,7 @@ them."
      ("no" :default "Dataprogram %d")
      ("nb" :default "Dataprogram %d")
      ("ro" :default "Lista %d")
+     ("pl" :default "Indeks %d:")
      ("pt_BR" :default "Listagem %d:")
      ("ru" :html "&#1056;&#1072;&#1089;&#1087;&#1077;&#1095;&#1072;&#1090;&#1082;&#1072; %d.:"
       :utf-8 "Распечатка %d.:")
@@ -6465,6 +6346,7 @@ them."
      ("it" :default "Riferimenti")
      ("nl" :default "Bronverwijzingen")
      ("nn" :default "Kjelder")
+     ("pl" :default "Odwołania") ; could be "Referencje" but I think its too englishy
      ("pt_BR" :html "Refer&ecirc;ncias" :default "Referências" :ascii "Referencias")
      ("ro" :default "Bibliografie")
      ("sl" :default "Reference")
@@ -6479,6 +6361,7 @@ them."
      ("nl" :default "Zie figuur %s"
       :html "Zie figuur&nbsp;%s" :latex "Zie figuur~%s")
      ("nn" :default "Sjå figur %s")
+     ("pl" :default "Patrz obrazek %s") ; alternativly "Patrz rysunek %s"
      ("pt_BR" :default "Veja a figura %s")
      ("ro" :default "Vezi figura %s")
      ("sl" :default "Glej sliko %s")
@@ -6492,6 +6375,7 @@ them."
      ("nl" :default "Zie programma %s"
       :html "Zie programma&nbsp;%s" :latex "Zie programma~%s")
      ("nn" :default "Sjå program %s")
+     ("pl" :default "Patrz indeks %s")
      ("pt_BR" :default "Veja a listagem %s")
      ("ro" :default "Vezi tabelul %s")
      ("sl" :default "Glej izpis programa %s")
@@ -6511,6 +6395,7 @@ them."
      ("nl" :default "Zie sectie %s"
       :html "Zie sectie&nbsp;%s" :latex "Zie sectie~%s")
      ("nn" :default "Sjå del %s")
+     ("pl" :default "Patrz sekcja %s") ; seems rough
      ("pt_BR" :html "Veja a se&ccedil;&atilde;o %s" :default "Veja a seção %s"
       :ascii "Veja a secao %s")
      ("ro" :default "Vezi secțiunea %s")
@@ -6529,6 +6414,7 @@ them."
      ("nl" :default "Zie tabel %s"
       :html "Zie tabel&nbsp;%s" :latex "Zie tabel~%s")
      ("nn" :default "Sjå tabell %s")
+     ("pl" :default "Patrz tabela %s")
      ("pt_BR" :default "Veja a tabela %s")
      ("ro" :default "Vezi tabelul %s")
      ("sl" :default "Glej tabelo %s")
@@ -6547,6 +6433,7 @@ them."
      ("ja" :default "表" :html "&#34920;")
      ("nl" :default "Tabel")
      ("nn" :default "Tabell")
+     ("pl" :default "Tabela")
      ("pt_BR" :default "Tabela")
      ("ro" :default "Tabel")
      ("ru" :html "&#1058;&#1072;&#1073;&#1083;&#1080;&#1094;&#1072;"
@@ -6570,6 +6457,7 @@ them."
      ("no" :default "Tabell %d")
      ("nb" :default "Tabell %d")
      ("nn" :default "Tabell %d")
+     ("pl" :default "Tabela %d")
      ("pt_BR" :default "Tabela %d:")
      ("ro" :default "Tabel %d")
      ("ru" :html "&#1058;&#1072;&#1073;&#1083;&#1080;&#1094;&#1072; %d.:"
@@ -6598,7 +6486,7 @@ them."
      ("no" :default "Innhold")
      ("nb" :default "Innhold")
      ("nn" :default "Innhald")
-     ("pl" :html "Spis tre&#x015b;ci")
+     ("pl" :default "Spis treści" :html "Spis tre&#x015b;ci")
      ("pt_BR" :html "&Iacute;ndice" :utf-8 "Índice" :ascii "Indice")
      ("ro" :default "Cuprins")
      ("ru" :html "&#1057;&#1086;&#1076;&#1077;&#1088;&#1078;&#1072;&#1085;&#1080;&#1077;"
@@ -6621,6 +6509,7 @@ them."
      ("ja" :default "不明な参照先")
      ("nl" :default "Onbekende verwijzing")
      ("nn" :default "Ukjend kjelde")
+     ("pl" :default "Nieznane odwołanie") ; alternatively "Nieokreślone odwołanie"
      ("pt_BR" :html "Refer&ecirc;ncia desconhecida" :default "Referência desconhecida" :ascii "Referencia desconhecida")
      ("ro" :default "Referință necunoscută")
      ("ru" :html "&#1053;&#1077;&#1080;&#1079;&#1074;&#1077;&#1089;&#1090;&#1085;&#1072;&#1103; &#1089;&#1089;&#1099;&#1083;&#1082;&#1072;"
@@ -6702,7 +6591,7 @@ and `org-export-to-file' for more specialized functions."
   ;; buffer to a temporary file, as it may be too long for program
   ;; args in `start-process'.
   (with-temp-message "Initializing asynchronous export process"
-    (let ((copy-fun (org-export--generate-copy-script (current-buffer)))
+    (let ((copy-fun (org-element--generate-copy-script (current-buffer)))
           (temp-file (make-temp-file "org-export-process")))
       (let ((coding-system-for-write 'utf-8-emacs-unix))
         (write-region
@@ -6888,6 +6777,11 @@ or FILE."
 		     ',ext-plist)))
 	       (with-temp-buffer
 		 (insert output)
+                 ;; Ensure final newline.  This is what was done
+                 ;; historically, when we used `write-file'.
+                 ;; Note that adding a newline is only safe for
+                 ;; non-binary data.
+                 (unless (bolp) (insert "\n"))
 		 (let ((coding-system-for-write ',encoding))
 		   (write-region nil nil ,file)))
 	       (or (ignore-errors (funcall ',post-process ,file)) ,file)))
@@ -6895,6 +6789,11 @@ or FILE."
                        backend subtreep visible-only body-only ext-plist)))
           (with-temp-buffer
             (insert output)
+            ;; Ensure final newline.  This is what was done
+            ;; historically, when we used `write-file'.
+            ;; Note that adding a newline is only safe for
+            ;; non-binary data.
+            (unless (bolp) (insert "\n"))
             (let ((coding-system-for-write encoding))
 	      (write-region nil nil file)))
           (when (and (org-export--copy-to-kill-ring-p) (org-string-nw-p output))

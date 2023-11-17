@@ -197,6 +197,16 @@ link.
   :type '(alist :tag "Link display parameters"
 		:value-type plist))
 
+(defun org-link--set-link-display (symbol value)
+  "Set `org-link-descriptive' (SYMBOL) to VALUE.
+Also, ensure that links are updated in current buffer.
+
+This function is intended to be used as a :set function."
+  (set symbol value)
+  (dolist (buf (org-buffer-list))
+    (with-current-buffer buf
+      (org-link-descriptive-ensure))))
+
 (defcustom org-link-descriptive t
   "Non-nil means Org displays descriptive links.
 
@@ -208,6 +218,7 @@ literally.
 You can interactively set the value of this variable by calling
 `org-toggle-link-display' or from the \"Org > Hyperlinks\" menu."
   :group 'org-link
+  :set #'org-link--set-link-display
   :type 'boolean
   :safe #'booleanp)
 
@@ -883,7 +894,8 @@ This should be called after the variable `org-link-parameters' has changed."
 		  org-link-plain-re "\\)"))))
 
 (defun org-link-complete-file (&optional arg)
-  "Create a file link using completion."
+  "Create a file link using completion.
+With optional ARG \\='(16), abbreviate the file name in the link."
   (let ((file (read-file-name "File: "))
 	(pwd (file-name-as-directory (expand-file-name ".")))
 	(pwd1 (file-name-as-directory (abbreviate-file-name
@@ -928,7 +940,7 @@ according to FMT (default from `org-link-email-description-format')."
     (org-replace-escapes fmt table)))
 
 (defun org-link-store-props (&rest plist)
-  "Store link properties.
+  "Store link properties PLIST.
 The properties are pre-processed by extracting names, addresses
 and dates."
   (let ((x (plist-get plist :from)))
@@ -960,7 +972,7 @@ and dates."
   (setq org-store-link-plist plist))
 
 (defun org-link-add-props (&rest plist)
-  "Add these properties to the link property list."
+  "Add these properties to the link property list PLIST."
   (let (key value)
     (while plist
       (setq key (pop plist) value (pop plist))
@@ -1139,8 +1151,8 @@ for internal and \"file\" links, or stored as a parameter in
 
 (defun org-link-open-from-string (s &optional arg)
   "Open a link in the string S, as if it was in Org mode.
-Optional argument is passed to `org-open-file' when S is
-a \"file\" link."
+Optional argument ARG is passed to `org-open-file' when S is a
+\"file\" link."
   (interactive "sLink: \nP")
   (pcase (with-temp-buffer
 	   (let ((org-inhibit-startup nil))
@@ -1237,7 +1249,7 @@ of matched result, which is either `dedicated' or `fuzzy'."
 	       (while (re-search-forward name nil t)
 		 (let* ((element (org-element-at-point))
 			(name (org-element-property :name element)))
-		   (when (and name (equal words (split-string name)))
+		   (when (and name (equal (mapcar #'upcase words) (mapcar #'upcase (split-string name))))
 		     (setq type 'dedicated)
 		     (forward-line 0)
 		     (throw :name-match t))))
@@ -1254,10 +1266,11 @@ of matched result, which is either `dedicated' or `fuzzy'."
 	     (goto-char (point-min))
 	     (catch :found
 	       (while (re-search-forward title-re nil t)
-		 (when (equal words
-			      (split-string
-			       (org-link--normalize-string
-				(org-get-heading t t t t))))
+		 (when (equal (mapcar #'upcase words)
+                              (mapcar #'upcase
+			              (split-string
+			               (org-link--normalize-string
+				        (org-get-heading t t t t)))))
 		   (throw :found t)))
 	       nil)))
       (forward-line 0)
@@ -1321,8 +1334,10 @@ priority cookie or tag."
 	  (org-link--normalize-string
 	   (or string (org-get-heading t t t t)))))
 
-(defun org-link-open-as-file (path arg)
+(defun org-link-open-as-file (path in-emacs)
   "Pretend PATH is a file name and open it.
+
+IN-EMACS is passed to `org-open-file'.
 
 According to \"file\"-link syntax, PATH may include additional
 search options, separated from the file name with \"::\".
@@ -1337,7 +1352,7 @@ This function is meant to be used as a possible tool for
 	(dired file-name)
       (apply #'org-open-file
 	     file-name
-	     arg
+	     in-emacs
 	     (cond ((not option) nil)
 		   ((string-match-p "\\`[0-9]+\\'" option)
 		    (list (string-to-number option)))

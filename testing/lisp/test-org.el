@@ -2862,11 +2862,24 @@ test <point>
      (equal '(11)
 	    (org-test-with-temp-text "* Level 1\n** Level 2"
 	      (let (org-odd-levels-only) (org-map-entries #'point "LEVEL>1")))))
-    ;; Level match with (ignored) starred operator.
+    ;; Category match.
     (should
-     (equal '(11)
-	    (org-test-with-temp-text "* Level 1\n** Level 2"
-	      (let (org-odd-levels-only) (org-map-entries #'point "LEVEL>*1")))))
+     (equal '(59)
+	    (org-test-with-temp-text "
+#+CATEGORY: foo
+
+* H1
+:PROPERTIES:
+:CATEGORY: bar
+:END:
+
+* H2"
+	      (org-map-entries #'point "CATEGORY=\"foo\""))))
+    ;; Todo match.
+    (should
+     (equal '(6)
+	    (org-test-with-temp-text "* H1\n* TODO H2\n* DONE H3"
+	      (org-map-entries #'point "TODO=\"TODO\""))))
     ;; Tag match.
     (should
      (equal '(11)
@@ -2948,7 +2961,7 @@ SCHEDULED: <2014-03-04 tue.>"
 :END:
 * H3"
 	      (org-map-entries #'point "TEST!=*1"))))
-    ;; Property matches on names including minus characters.
+    ;; Property matches on names containing quoted characters.
     (org-test-with-temp-text
      "
 * H1 :BAR:
@@ -2967,11 +2980,12 @@ SCHEDULED: <2014-03-04 tue.>"
 :PROPERTIES:
 :-FOO: 2
 :END:
-* H5"
-     (should (equal '(2) (org-map-entries #'point "TEST-FOO!=*0-FOO")))
-     (should (equal '(2) (org-map-entries #'point "-FOO+TEST-FOO!=*0")))
-     (should (equal '(88) (org-map-entries #'point "+-FOO!=*0-FOO")))
-     (should (equal '(88) (org-map-entries #'point "-FOO+-FOO!=*0"))))
+* H5 :TEST:"
+     (should (equal '(2) (org-map-entries #'point "TEST\\-FOO!=*0-FOO")))
+     (should (equal '(2) (org-map-entries #'point "-FOO+TEST\\-FOO!=*0")))
+     (should (equal '(88) (org-map-entries #'point "\\-FOO!=*0-FOO")))
+     (should (equal '(88) (org-map-entries #'point "-FOO+\\-FOO!=*0")))
+     (should (equal '(88) (org-map-entries #'point "-TEST-FOO-TEST\\-FOO=1"))))
     ;; Multiple criteria.
     (should
      (equal '(23)
@@ -4446,6 +4460,16 @@ asd
      (let ((org-special-ctrl-a/e '(nil . nil)))
        (org-beginning-of-line)
        (looking-at "Headline"))))
+  (should
+   (org-test-with-temp-text "* TODO [#A] Headline\n<point>"
+     (let ((org-special-ctrl-a/e t))
+       (org-beginning-of-line 0)
+       (looking-at-p "Headline"))))
+  (should
+   (org-test-with-temp-text "<point>\n* TODO [#A] Headline"
+     (let ((org-special-ctrl-a/e t))
+       (org-beginning-of-line 2)
+       (looking-at-p "Headline"))))
   ;; At an headline with reversed movement, first move to beginning of
   ;; line, then to the beginning of title.
   (should
@@ -4466,6 +4490,18 @@ asd
 	   (this-command last-command))
        (and (progn (org-beginning-of-line) (bolp))
 	    (progn (org-beginning-of-line) (looking-at-p "Headline"))))))
+  (should
+   (org-test-with-temp-text "* TODO Headline\n<point>"
+     (let ((org-special-ctrl-a/e 'reversed)
+	   (this-command last-command))
+       (and (progn (org-beginning-of-line 0) (bolp))
+	    (progn (org-beginning-of-line) (looking-at-p "Headline"))))))
+  (should
+   (org-test-with-temp-text "<point>\n* TODO Headline"
+     (let ((org-special-ctrl-a/e 'reversed)
+	   (this-command last-command))
+       (and (progn (org-beginning-of-line 2) (bolp))
+	    (progn (org-beginning-of-line) (looking-at-p "Headline"))))))
   ;; At an item with special movement, first move after to beginning
   ;; of title, then to the beginning of line, rinse, repeat.
   (should
@@ -4474,6 +4510,14 @@ asd
        (and (progn (org-beginning-of-line) (looking-at-p "Item"))
 	    (progn (org-beginning-of-line) (bolp))
 	    (progn (org-beginning-of-line) (looking-at-p "Item"))))))
+  (should
+   (org-test-with-temp-text "- [ ] Item\n<point>"
+     (let ((org-special-ctrl-a/e t))
+       (org-beginning-of-line 0) (looking-at-p "Item"))))
+  (should
+   (org-test-with-temp-text "<point>\n- [ ] Item"
+     (let ((org-special-ctrl-a/e t))
+       (org-beginning-of-line 2) (looking-at-p "Item"))))
   ;; At an item with reversed movement, first move to beginning of
   ;; line, then to the beginning of title.
   (should
@@ -4481,6 +4525,18 @@ asd
      (let ((org-special-ctrl-a/e 'reversed)
 	   (this-command last-command))
        (and (progn (org-beginning-of-line) (bolp))
+	    (progn (org-beginning-of-line) (looking-at-p "Item"))))))
+  (should
+   (org-test-with-temp-text "- [X] Item\n<point>"
+     (let ((org-special-ctrl-a/e 'reversed)
+	   (this-command last-command))
+       (and (progn (org-beginning-of-line 0) (bolp))
+	    (progn (org-beginning-of-line) (looking-at-p "Item"))))))
+  (should
+   (org-test-with-temp-text "<point>\n- [X] Item"
+     (let ((org-special-ctrl-a/e 'reversed)
+	   (this-command last-command))
+       (and (progn (org-beginning-of-line 2) (bolp))
 	    (progn (org-beginning-of-line) (looking-at-p "Item"))))))
   ;; Leave point before invisible characters at column 0.
   (should
@@ -4585,6 +4641,14 @@ asd
 	    (progn (org-end-of-line) (eolp))
 	    (progn (org-end-of-line) (looking-at-p " :tag:"))))))
   (should
+   (org-test-with-temp-text "* Headline1 :tag:\n<point>"
+     (let ((org-special-ctrl-a/e t))
+       (org-end-of-line 0) (looking-at-p " :tag:"))))
+  (should
+   (org-test-with-temp-text "<point>\n* Headline1 :tag:\n"
+     (let ((org-special-ctrl-a/e t))
+       (org-end-of-line 2) (looking-at-p " :tag:"))))
+  (should
    (org-test-with-temp-text "* Headline2a :tag:\n** Sub"
      (org-overview)
      (let ((org-special-ctrl-a/e t))
@@ -4610,6 +4674,18 @@ asd
      (let ((org-special-ctrl-a/e '(nil . t))
 	   (this-command last-command))
        (and (progn (org-end-of-line) (eolp))
+	    (progn (org-end-of-line) (looking-at-p " :tag:"))))))
+  (should
+   (org-test-with-temp-text "* Headline3 :tag:\n<point>"
+     (let ((org-special-ctrl-a/e 'reversed)
+	   (this-command last-command))
+       (and (progn (org-end-of-line 0) (eolp))
+	    (progn (org-end-of-line) (looking-at-p " :tag:"))))))
+  (should
+   (org-test-with-temp-text "<point>\n* Headline3 :tag:\n"
+     (let ((org-special-ctrl-a/e 'reversed)
+	   (this-command last-command))
+       (and (progn (org-end-of-line 2) (eolp))
 	    (progn (org-end-of-line) (looking-at-p " :tag:"))))))
   (should
    (org-test-with-temp-text "* Headline2a :tag:\n** Sub"
@@ -6849,6 +6925,34 @@ Paragraph<point>"
 	      "#+PROPERTY: A 0\n* H\n:PROPERTIES:\n:A+: 1\n:END:"
 	    (org-mode-restart)
 	    (org-entry-get (point-max) "A" t))))
+  ;; Explicit nil value takes precedence over parent non-nil properties.
+  (should-not
+   (org-test-with-temp-text
+       "* 1
+:PROPERTIES:
+:PROP: value
+:END:
+** 2
+:PROPERTIES:
+:PROP: nil
+:END:
+*** 3
+"
+     (org-entry-get (point-max) "PROP" t)))
+  (should
+   (equal "value"
+          (org-test-with-temp-text
+              "* 1
+:PROPERTIES:
+:PROP: value
+:END:<point>
+** 2
+:PROPERTIES:
+:PROP: nil
+:END:
+*** 3
+"
+            (org-entry-get nil "PROP" t))))
   ;; document level property-drawer has precedance over
   ;; global-property by PROPERTY-keyword.
   (should
@@ -8399,25 +8503,74 @@ Paragraph<point>"
   ;; Handle every repeater type using hours step.
   (should
    (string-match-p
-    "2014-03-04 .* 02:00"
-    (org-test-at-time "<2014-03-04 02:35>"
+    (regexp-quote "<2014-03-04 02:00 +8h>")
+    (org-test-without-dow
+     (org-test-at-time "<2014-03-04 02:35>"
       (org-test-with-temp-text "* TODO H\n<2014-03-03 18:00 +8h>"
 	(org-todo "DONE")
-	(buffer-string)))))
+	(buffer-string))))))
   (should
    (string-match-p
-    "2014-03-04 .* 10:00"
-    (org-test-at-time "<2014-03-04 02:35>"
+    (regexp-quote "<2014-03-04 10:00 ++8h>")
+    (org-test-without-dow
+     (org-test-at-time "<2014-03-04 02:35>"
       (org-test-with-temp-text "* TODO H\n<2014-03-03 18:00 ++8h>"
 	(org-todo "DONE")
-	(buffer-string)))))
+	(buffer-string))))))
   (should
    (string-match-p
-    "2014-03-04 .* 10:35"
-    (org-test-at-time "<2014-03-04 02:35>"
+    (regexp-quote "<2014-03-04 10:35 .+8h>")
+    (org-test-without-dow
+     (org-test-at-time "<2014-03-04 02:35>"
       (org-test-with-temp-text "* TODO H\n<2014-03-03 18:00 .+8h>"
 	(org-todo "DONE")
-	(buffer-string)))))
+	(buffer-string))))))
+  ;; Handle `org-extend-today-until'.
+  (should
+   (string-match-p
+    (regexp-quote "<2014-03-04 ++1d>")
+    (let ((org-extend-today-until 4))
+      (org-test-without-dow
+       (org-test-at-time "<2014-03-04 02:35>"
+        (org-test-with-temp-text "* TODO H\n<2014-03-03 ++1d>"
+	  (org-todo "DONE")
+	  (buffer-string)))))))
+  (should
+   (string-match-p
+    (regexp-quote "<2014-03-06 17:00 ++1d>")
+    (let ((org-extend-today-until 4))
+      (org-test-without-dow
+       (org-test-at-time "<2014-03-05 18:00>"
+        (org-test-with-temp-text "* TODO H\n<2014-03-04 17:00 ++1d>"
+	  (org-todo "DONE")
+	  (buffer-string)))))))
+  (should
+   (string-match-p
+    (regexp-quote "<2014-03-04 10:00 ++8h>")
+    (let ((org-extend-today-until 4))
+      (org-test-without-dow
+       (org-test-at-time "<2014-03-04 02:35>"
+        (org-test-with-temp-text "* TODO H\n<2014-03-03 18:00 ++8h>"
+	  (org-todo "DONE")
+	  (buffer-string)))))))
+  (should
+   (string-match-p
+    (regexp-quote "<2014-03-04 18:00 .+1d>")
+    (let ((org-extend-today-until 4))
+      (org-test-without-dow
+       (org-test-at-time "<2014-03-04 02:35>"
+        (org-test-with-temp-text "* TODO H\n<2014-03-03 18:00 .+1d>"
+	  (org-todo "DONE")
+	  (buffer-string)))))))
+  (should
+   (string-match-p
+    (regexp-quote "<2014-03-04 10:35 .+8h>")
+    (let ((org-extend-today-until 4))
+      (org-test-without-dow
+       (org-test-at-time "<2014-03-04 02:35>"
+        (org-test-with-temp-text "* TODO H\n<2014-03-03 18:00 .+8h>"
+	  (org-todo "DONE")
+	  (buffer-string)))))))
   ;; Do not repeat inactive time stamps with a repeater.
   (should-not
    (string-match-p

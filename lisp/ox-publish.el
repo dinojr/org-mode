@@ -165,7 +165,7 @@ and are equivalent to the corresponding user variables listed in
 the right column.  Backend specific properties may also be
 included.  See the backend documentation for more information.
 
-  :author                   `user-full-name'
+  :author                   variable `user-full-name'
   :creator                  `org-export-creator-string'
   :email                    `user-mail-address'
   :exclude-tags             `org-export-exclude-tags'
@@ -358,7 +358,9 @@ You can overwrite this default per project in your
 ;;; Timestamp-related functions
 
 (defun org-publish-timestamp-filename (filename &optional pub-dir pub-func)
-  "Return path to timestamp file for filename FILENAME."
+  "Return path to timestamp file for filename FILENAME.
+The timestamp file name is constructed using FILENAME, publishing
+directory PUB-DIR, and PUB-FUNC publishing function."
   (setq filename (concat filename "::" (or pub-dir "") "::"
 			 (format "%s" (or pub-func ""))))
   (concat "X" (if (fboundp 'sha1) (sha1 filename) (md5 filename))))

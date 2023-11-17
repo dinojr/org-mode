@@ -41,6 +41,11 @@
 
 (defvar org-babel-default-header-args:python '())
 
+(defconst org-babel-header-args:python
+  '((return . :any)
+    (python . :any))
+  "Python-specific header arguments.")
+
 (defcustom org-babel-python-command "python"
   "Name of the command for executing Python code."
   :version "24.4"
@@ -63,7 +68,7 @@
   :type 'symbol)
 
 (defun org-babel-execute:python (body params)
-  "Execute a block of Python code with Babel.
+  "Execute Python BODY according to PARAMS.
 This function is called by `org-babel-execute-src-block'."
   (let* ((org-babel-python-command
 	  (or (cdr (assq :python params))
@@ -174,7 +179,8 @@ def __org_babel_python_format_value(result, result_file, result_params):
   "Python function to format value result and save it to file.")
 
 (defun org-babel-variable-assignments:python (params)
-  "Return a list of Python statements assigning the block's variables."
+  "Return a list of Python statements assigning the block's variables.
+The assignments are defined in PARAMS."
   (mapcar
    (lambda (pair)
      (format "%s=%s"
@@ -215,6 +221,7 @@ results as a string."
   (cdr (assoc session org-babel-python-buffers)))
 
 (defun org-babel-python-with-earmuffs (session)
+  "Return SESSION name as string, ensuring *...* around."
   (let ((name (if (stringp session) session (format "%s" session))))
     (if (and (string= "*" (substring name 0 1))
 	     (string= "*" (substring name (- (length name) 1))))
@@ -222,6 +229,7 @@ results as a string."
       (format "*%s*" name))))
 
 (defun org-babel-python-without-earmuffs (session)
+  "Return SESSION name as string, without *...* around."
   (let ((name (if (stringp session) session (format "%s" session))))
     (if (and (string= "*" (substring name 0 1))
 	     (string= "*" (substring name (- (length name) 1))))
@@ -272,7 +280,7 @@ then create.  Return the initialized session."
       ;; multiple prompts during initialization.
       (with-current-buffer py-buffer
         (while (not org-babel-python--initialized)
-          (org-babel-comint-wait-for-output py-buffer)))
+          (sleep-for 0.010)))
       (setq org-babel-python-buffers
 	    (cons (cons session py-buffer)
 		  (assq-delete-all session org-babel-python-buffers)))
@@ -289,7 +297,8 @@ then create.  Return the initialized session."
 
 (defun org-babel-python-format-session-value
     (src-file result-file result-params)
-  "Return Python code to evaluate SRC-FILE and write result to RESULT-FILE."
+  "Return Python code to evaluate SRC-FILE and write result to RESULT-FILE.
+RESULT-PARAMS defines the result type."
   (format "\
 import ast
 with open('%s') as __org_babel_python_tmpfile:
@@ -390,9 +399,10 @@ finally:
 	     (org-babel-python-without-earmuffs session)))
 	(python-shell-send-string body))
       ;; same as `python-shell-comint-end-of-output-p' in emacs-25.1+
-      (while (not (string-match
-		   org-babel-python-eoe-indicator
-		   string-buffer))
+      (while (not (and (python-shell-comint-end-of-output-p string-buffer)
+                       (string-match
+		        org-babel-python-eoe-indicator
+		        string-buffer)))
 	(accept-process-output (get-buffer-process (current-buffer))))
       (org-babel-chomp (substring string-buffer 0 (match-beginning 0))))))
 
@@ -425,14 +435,14 @@ with open('%s') as f:
 		      (body (org-babel-python-format-session-value
 			     tmp-src-file results-file result-params)))
 		 (org-babel-python-send-string session body)
-		 (sleep-for 0 10)
+		 (sleep-for 0.010)
 		 (org-babel-eval-read-file results-file)))))))
     (org-babel-result-cond result-params
       results
       (org-babel-python-table-or-string results))))
 
 (defun org-babel-python-read-string (string)
-  "Strip \\='s from around Python string."
+  "Strip \\='s from around Python STRING."
   (if (and (string-prefix-p "'" string)
 	   (string-suffix-p "'" string))
       (substring string 1 -1)

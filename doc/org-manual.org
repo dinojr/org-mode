@@ -4684,10 +4684,36 @@ Here is an example of a checkbox list.
   - [X] talk to the neighbors
 #+end_example
 
+A checkbox can be in one of the three states:
+1. not checked =[ ]=
+2. partially checked =[-]=
+3. checked =[X]=
+
 Checkboxes work hierarchically, so if a checkbox item has children
 that are checkboxes, toggling one of the children checkboxes makes the
 parent checkbox reflect if none, some, or all of the children are
 checked.
+
+If all child checkboxes are not checked, the parent checkbox is also not checked.
+#+begin_example
+- [ ] call people
+  - [ ] Peter
+  - [ ] Sarah
+#+end_example
+
+If some but not all child checkboxes are checked, the parent checkbox is partially checked.
+#+begin_example
+- [-] call people
+  - [X] Peter
+  - [ ] Sarah
+#+end_example
+
+If all child checkboxes are checked, the parent checkbox is also checked.
+#+begin_example
+- [X] call people
+  - [X] Peter
+  - [X] Sarah
+#+end_example
 
 #+cindex: statistics, for checkboxes
 #+cindex: checkbox statistics
@@ -5971,7 +5997,7 @@ The following commands insert or update the dynamic block:
   #+kindex: C-c C-c
   #+kindex: C-c C-x C-u
   #+findex: org-dblock-update
-  Update dynamic block at point.  point needs to be in the =#+BEGIN=
+  Update dynamic block at point.  Point needs to be on the =#+BEGIN=
   line of the dynamic block.
 
 - {{{kbd(C-u C-c C-x C-u)}}} (~org-update-all-dblocks~) ::
@@ -9320,20 +9346,20 @@ With the regular =<= operator, the search would handle entries without
 an =EFFORT= property as having a zero effort and would include them in
 the result as well.
 
-Currently, you can use only property names including alphanumeric
-characters, underscores, and minus characters in search strings.  In
-addition, if you want to search for a property whose name starts with
-a minus character, you have to "quote" that leading minus character
-with an explicit positive selection plus character, like this:
+You can use all characters valid in property names when matching
+properties.  However, you have to quote some characters in property
+names with backslashes when using them in search strings, namely all
+characters different from alphanumerics and underscores[fn:: If you
+quote alphanumeric characters or underscores with a backslash, that
+backslash is ignored.].  For example, to search for all entries having
+a property =boss-prio=, =boss:prio=, or =boss\prio=, respectively,
+with value =C=, use search strings
 
 #+begin_example
-+-long-and-twisted-property-name-="foo"
+boss\-prio="C"
+boss\:prio="C"
+boss\\prio="C"
 #+end_example
-
-#+texinfo: @noindent
-Without that extra plus character, the minus character would be taken
-to indicate a negative selection on search term
-=long-and-twisted-property-name-​="foo"=.
 
 You can configure Org mode to use property inheritance during
 a search, but beware that this can slow down searches considerably.
@@ -12053,22 +12079,38 @@ global variables, include:
 
   #+cindex: @samp{SELECT_TAGS}, keyword
   #+vindex: org-export-select-tags
-  The default value is =("export")=.  When a tree is tagged with
-  =export= (~org-export-select-tags~), Org selects that tree and its
-  subtrees for export.  Org excludes trees with =noexport= tags, see
-  below.  When selectively exporting files with =export= tags set, Org
-  does not export any text that appears before the first headline.
+  List of tags that will, if present, be selected for export.  The
+  default value is ~org-export-select-tags~ =("export")=.  When a tree
+  is tagged with =export=, Org selects that tree and its subtrees for
+  export, ignoring all the other sections that do not possess the
+  =export= tag.
+
+  When selectively exporting files with =export= tags set, Org does
+  not export any text that appears before the first headline.
+
+  Note that a file without the =export= tags will export all its
+  sections.
+
+  To select non-default tags for export, customize
+  ~org-export-select-tags~ (globally) or add =#+SELECT_TAGS: tag1
+  tag2= to the document.
 
 - =EXCLUDE_TAGS= ::
 
   #+cindex: @samp{EXCLUDE_TAGS}, keyword
   #+vindex: org-export-exclude-tags
-  The default value is =("noexport")=.  When a tree is tagged with
-  =noexport= (~org-export-exclude-tags~), Org excludes that tree and
-  its subtrees from export.  Entries tagged with =noexport= are
-  unconditionally excluded from the export, even if they have an
-  =export= tag.  Even if a subtree is not exported, Org executes any
-  code blocks contained there.
+  List of tags that will be excluded from export.  The default value is
+  ~org-export-exclude-tags~ =("noexport")=.  When a tree is tagged
+  with =noexport=, Org excludes that tree and its subtrees from
+  export.
+
+  Entries tagged with =noexport= are unconditionally excluded from the
+  export, even if they have an =export= tag.  Even if a subtree is not
+  exported, Org executes any code blocks contained there.
+
+  To select non-default tags for the exclusion, customize
+  ~org-export-exclude-tags~ (globally) or add =#+EXCLUDE_TAGS: tag1
+  tag2= to the document.
 
 - =TITLE= ::
 
@@ -13200,7 +13242,7 @@ introduced with the HTML5 standard.  To enable them, set
 ~org-html-html5-fancy~ to non-~nil~.  Or use an =OPTIONS= line in the
 file to set =html5-fancy=.
 
-HTML5 documents can now have arbitrary =#+BEGIN= ... =#+END= blocks.
+HTML5 documents can have arbitrary =#+BEGIN= ... =#+END= blocks.
 For example:
 
 #+begin_example
@@ -17764,6 +17806,10 @@ from the reference.
 
 : :var NAME=FILE:REFERENCE
 
+When =FILE= does not exist, the reference is searched in the current
+file, using the verbatim reference.  This way,
+=:var table=tbl:example= will be searched inside the current buffer.
+
 Here are examples of passing values by reference:
 
 - table ::
@@ -20458,12 +20504,12 @@ packages are documented here.
   #+vindex: org-table-formula-constants
 
   Org can use names for constants in formulas in tables.  Org can also
-  use calculation suffixes for units, such as =M= for =Mega=.  For
-  a standard collection of such constants, install the =constants=
+  use calculation suffixes for units, such as =M= for =Mega=.  For a
+  standard collection of such constants, install the =constants=
   package.  Install version 2.0 of this package, available at
-  [[http://www.astro.uva.nl/~dominik/Tools]].  Org checks if the function
-  ~constants-get~ has been autoloaded.  Installation instructions are
-  in the file =constants.el=.
+  [[https://github.com/cdominik/constants-for-Emacs]].  Org checks if the
+  function ~constants-get~ has been autoloaded.  Installation
+  instructions are in the file =constants.el=.
 
 - =cdlatex.el= by Carsten Dominik ::
   #+cindex: @file{cdlatex.el}

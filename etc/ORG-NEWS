@@ -13,6 +13,12 @@ Please send Org bug reports to mailto:emacs-orgmode@gnu.org.
 
 * Version 9.7 (not released yet)
 ** Important announcements and breaking changes
+*** Babel references =FILE:REFERENCE= now search current buffer when =FILE= does not exist
+
+When =FILE= does not exist, the reference is searched in the current
+file, using the verbatim reference.  This way,
+=:var table=tbl:example= will be searched inside the current buffer.
+
 *** New export option ~org-export-expand-links~
 
 The new option makes Org expand environment variables in link and INCLUDE paths.
@@ -304,7 +310,23 @@ setting the ~STYLE~ property for each sub-task.
 
 The change is breaking when ~org-use-property-inheritance~ is set to ~t~.
 
+*** ~org-babel-lilypond-compile-lilyfile~ ignores optional second argument
+
+The =TEST= parameter is better served by Emacs debugging tools.
 ** New and changed options
+*** New variable ~org-clock-out-removed-last-clock~
+
+The variable is intended to be used by ~org-clock-out-hook~.  It is a
+flag used to signal when the =CLOCK= line has been removed.  This can
+happen when ~org-clock-out-remove-zero-time-clocks~ is customized to
+be non-nil.
+
+*** ~org-info-other-documents~ is now a custom option
+
+Users can now extend the value of ~org-info-other-documents~ to
+specify Urls to third-party (non-Emacs) online info nodes when
+exporting =info:= links.
+
 *** ~org-export-smart-quotes-alist~ is now a custom option
 
 Previously, smart quotes rules for different languages where
@@ -470,6 +492,31 @@ Currently implemented options are:
   iCalendar programs support this usage.
 
 ** New features
+*** =ob-plantuml.el=: Support tikz file format output
+
+=ob-plantuml.el= now output =tikz= :file format via
+=-tlatex:nopreamble= option.  So that the output tikz file can be an
+input into the exported latex correctly.
+
+For example, exporting the following to LaTeX
+
+#+begin_src plantuml :file test.tikz :exports results
+Bob -> Alice : Hello World!
+#+end_src
+
+will include the generated =.tikz= into the exported LaTeX source.
+
+*** =UNNUMBERED= property inheritance is now honored by ~org-num-mode~
+
+When ~org-num-skip-unnumbered~ is non-nil, ~org-num-mode~ now honors
+~org-use-property-inheritance~ for =UNNUMBERED= property (see manual
+section "Property Inheritance").  Previously, only local =UNNUMBERED=
+property was taken into account.
+
+Users can add ="UNNUMBERED"= to ~org-use-property-inheritance~ and set
+~org-numb-skip-unnumbered~ to ~t~ to make ~org-num-mode~ skip
+numbering of all the sub-headings with non-nil =UNNUMBERED= property.
+
 *** New final hooks for Modifier-Cursor keys
 
 Final hooks are added to the following commands:
@@ -593,7 +640,24 @@ return a matplotlib Figure object to plot. For output results, the
 current figure (as returned by =pyplot.gcf()=) is cleared before
 evaluation, and then plotted afterwards.
 
+*** =ob-maxima.el=: Support for ~batch~ and ~draw~
+
+=ob-maxima= has two new header arguments: ~:batch~ and
+~:graphics-pkg~.
+
+The ~:batch~ header argument can be set to one of Maxima's file
+loaders (~batch~, ~load~ or ~batchload~); the default remains
+~batchload~. The ~:graphics-pkg~ header argument can be set to one of
+Maxima's graphics packages (~draw~ or ~plot~); the default remains
+~plot~.  The graphics terminal is now determined from the file-ending
+of the file-name set in the ~:file~ header argument.
+
 ** New functions and changes in function arguments
+*** ~org-fold-hide-drawer-all~ is now interactive
+
+~org-fold-hide-drawer-all~ is now a command, accepting two optional
+arguments - region to act on.
+
 *** =TYPES= argument in ~org-element-lineage~ can now be a symbol
 
 When =TYPES= is symbol, only check syntax nodes of that type.

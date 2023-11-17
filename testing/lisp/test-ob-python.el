@@ -242,7 +242,7 @@ print('Yep!')
 	        (and (not (string= expected (org-babel-execute-src-block)))
 		     (string= expected
 			      (progn
-			        (sleep-for 0 200)
+			        (sleep-for 0.200)
 			        (goto-char (org-babel-where-is-src-block-result))
 			        (org-babel-read-result)))))))))
 
@@ -269,7 +269,7 @@ print(\"Yep!\")
     (org-test-with-temp-text
         (concat src-block results-before)
       (should (progn (org-babel-execute-src-block)
-                     (sleep-for 0 200)
+                     (sleep-for 0.200)
                      (string= (concat src-block results-after)
                               (buffer-string)))))))
 
@@ -292,7 +292,7 @@ print(list(range(3)))
     (org-test-with-temp-text
         src-block
       (should (progn (org-babel-execute-src-block)
-                     (sleep-for 0 200)
+                     (sleep-for 0.200)
                      (string= (concat src-block result)
                               (buffer-string)))))))
 
@@ -309,6 +309,25 @@ print(list(range(3)))
 1
 #+end_src"
     (should (org-babel-execute-src-block))))
+
+(ert-deftest test-ob-python/session-restart ()
+  ;; Disable the test on older Emacs as built-in python.el sometimes
+  ;; fail to initialize session.
+  (skip-unless (version<= "28" emacs-version))
+  (should
+   (equal "success"
+          (progn
+            (org-test-with-temp-text "#+begin_src python :session :results output
+print('start')
+#+end_src"
+	                             (org-babel-execute-src-block))
+            (let ((proc (python-shell-get-process)))
+              (python-shell-send-string "exit()")
+              (while (accept-process-output proc)))
+            (org-test-with-temp-text "#+begin_src python :session :results output
+print('success')
+#+end_src"
+	                             (org-babel-execute-src-block))))))
 
 (provide 'test-ob-python)
 

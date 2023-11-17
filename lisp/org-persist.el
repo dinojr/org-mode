@@ -614,9 +614,14 @@ When INNER is non-nil, do not try to match as list of containers."
      (unless (stringp associated)
        (setq associated (cadr associated)))
      (let* ((rtn `(:file ,associated))
-            (inode (and (fboundp 'file-attribute-inode-number)
-                        (file-attribute-inode-number
-                         (file-attributes associated)))))
+            (inode (and
+                    ;; Do not store :inode for remote files - it may
+                    ;; be time-consuming on slow connections or even
+                    ;; fail completely when ssh connection is closed.
+                    (not (file-remote-p associated))
+                    (fboundp 'file-attribute-inode-number)
+                    (file-attribute-inode-number
+                     (file-attributes associated)))))
        (when inode (plist-put rtn :inode inode))
        rtn))
     ((or (pred bufferp) `(:buffer ,_))
@@ -634,6 +639,10 @@ When INNER is non-nil, do not try to match as list of containers."
                      (or (buffer-base-buffer associated)
                          associated)))
          (setq inode (when (and file
+                                ;; Do not store :inode for remote files - it may
+                                ;; be time-consuming on slow connections or even
+                                ;; fail completely when ssh connection is closed.
+                                (not (file-remote-p file))
                                 (fboundp 'file-attribute-inode-number))
                        (file-attribute-inode-number
                         (file-attributes file))))
@@ -829,7 +838,7 @@ COLLECTION is the plist holding data collection."
             (make-directory (file-name-directory file-copy) t))
           (if (org--should-fetch-remote-resource-p path)
               (url-copy-file path file-copy 'overwrite)
-            (error "The remote resource %S is considered unsafe, and will not be downloaded."
+            (error "The remote resource %S is considered unsafe, and will not be downloaded"
                    path)))
         (format "%s-%s.%s" persist-file (md5 path) ext)))))
 
@@ -1027,7 +1036,8 @@ CONTAINER as well.  For example:
 
 (cl-defun org-persist-load (container &optional associated hash-must-match &key read-related)
   "Load CONTAINER data for ASSOCIATED.
-The arguments have the same meaning as in `org-persist-read'."
+The arguments CONTAINER, ASSOCIATED, HASH-MUST-MATCH, and READ-RELATED
+have the same meaning as in `org-persist-read'."
   (org-persist-read container associated hash-must-match t :read-related read-related))
 
 (defun org-persist-load-all (&optional associated)

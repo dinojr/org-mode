@@ -189,7 +189,7 @@ Parameters are in match group 2.")
 
 (defconst org-element-dynamic-block-open-re-nogroup
   (rx line-start (0+ (any ?\s ?\t))
-      "#+BEGIN:" (0+ (any ?\s ?\t)))
+      "#+BEGIN:" (0+ (any ?\s ?\t)) word)
   "Regexp matching the opening line of a dynamic block.")
 
 (defconst org-element-headline-re
@@ -498,6 +498,200 @@ past the brackets."
 	    (when end
 	      (goto-char end)
 	      (buffer-substring-no-properties (1+ pos) (1- end)))))))))
+
+(defconst org-element--cache-variables
+  '( org-element--cache org-element--cache-size
+     org-element--headline-cache org-element--headline-cache-size
+     org-element--cache-hash-left org-element--cache-hash-right
+     org-element--cache-sync-requests org-element--cache-sync-timer
+     org-element--cache-sync-keys-value org-element--cache-change-tic
+     org-element--cache-last-buffer-size
+     org-element--cache-diagnostics-ring
+     org-element--cache-diagnostics-ring-size
+     org-element--cache-gapless
+     org-element--cache-change-warning)
+  "List of variable symbols holding cache state.")
+
+(defconst org-element-ignored-local-variables
+  `( org-font-lock-keywords
+     ,@org-element--cache-variables)
+  "List of variables not copied through upon Org buffer duplication.
+Export process and parsing in `org-element-parse-secondary-string'
+takes place on a copy of the original buffer.  When this copy is
+created, all Org related local variables not in this list are copied
+to the new buffer.  Variables with an unreadable value are also
+ignored.")
+
+(cl-defun org-element--generate-copy-script (buffer
+                                             &key
+                                             copy-unreadable
+                                             drop-visibility
+                                             drop-narrowing
+                                             drop-contents
+                                             drop-locals)
+  "Generate a function duplicating BUFFER.
+
+The copy will preserve local variables, visibility, contents and
+narrowing of the original buffer.  If a region was active in
+BUFFER, contents will be narrowed to that region instead.
+
+When optional key COPY-UNREADABLE is non-nil, do not ensure that all
+the copied local variables will be readable in another Emacs session.
+
+When optional keys DROP-VISIBILITY, DROP-NARROWING, DROP-CONTENTS, or
+DROP-LOCALS are non-nil, do not preserve visibility, narrowing,
+contents, or local variables correspondingly.
+
+The resulting function can be evaluated at a later time, from
+another buffer, effectively cloning the original buffer there.
+
+The function assumes BUFFER's major mode is `org-mode'."
+  (with-current-buffer buffer
+    (let ((str (unless drop-contents (org-with-wide-buffer (buffer-string))))
+          (narrowing
+           (unless drop-narrowing
+             (if (org-region-active-p)
+	         (list (region-beginning) (region-end))
+	       (list (point-min) (point-max)))))
+	  (pos (point))
+	  (varvals
+           (unless drop-locals
+	     (let ((varvals nil))
+	       (dolist (entry (buffer-local-variables (buffer-base-buffer)))
+	         (when (consp entry)
+		   (let ((var (car entry))
+		         (val (cdr entry)))
+		     (and (not (memq var org-element-ignored-local-variables))
+			  (or (memq var
+				    '(default-directory
+                                      ;; Required to convert file
+                                      ;; links in the #+INCLUDEd
+                                      ;; files.  See
+                                      ;; `org-export--prepare-file-contents'.
+				      buffer-file-name
+				      buffer-file-coding-system
+                                      ;; Needed to preserve folding state
+                                      char-property-alias-alist))
+			      (string-match-p "^\\(org-\\|orgtbl-\\)"
+					      (symbol-name var)))
+			  ;; Skip unreadable values, as they cannot be
+			  ;; sent to external process.
+			  (or copy-unreadable (not val)
+                              (ignore-errors (read (format "%S" val))))
+			  (push (cons var val) varvals)))))
+               varvals)))
+	  (ols
+           (unless drop-visibility
+	     (let (ov-set)
+	       (dolist (ov (overlays-in (point-min) (point-max)))
+	         (let ((invis-prop (overlay-get ov 'invisible)))
+		   (when invis-prop
+		     (push (list (overlay-start ov) (overlay-end ov)
+			         invis-prop)
+			   ov-set))))
+	       ov-set))))
+      (lambda ()
+	(let ((inhibit-modification-hooks t))
+	  ;; Set major mode. Ignore `org-mode-hook' and other hooks as
+	  ;; they have been run already in BUFFER.
+          (unless (eq major-mode 'org-mode)
+            (delay-mode-hooks
+              (let ((org-inhibit-startup t)) (org-mode))))
+	  ;; Copy specific buffer local variables.
+	  (pcase-dolist (`(,var . ,val) varvals)
+	    (set (make-local-variable var) val))
+	  ;; Whole buffer contents when requested.
+          (when str
+            (let ((inhibit-read-only t))
+              (erase-buffer) (insert str)))
+          ;; Make org-element-cache not complain about changed buffer
+          ;; state.
+          (org-element-cache-reset nil 'no-persistence)
+	  ;; Narrowing.
+          (when narrowing
+	    (apply #'narrow-to-region narrowing))
+	  ;; Current position of point.
+	  (goto-char pos)
+	  ;; Overlays with invisible property.
+	  (pcase-dolist (`(,start ,end ,invis) ols)
+	    (overlay-put (make-overlay start end) 'invisible invis))
+          ;; Never write the buffer copy to disk, despite
+          ;; `buffer-file-name' not being nil.
+          (setq write-contents-functions (list (lambda (&rest _) t))))))))
+
+(cl-defun org-element-copy-buffer (&key to-buffer drop-visibility
+                                        drop-narrowing drop-contents
+                                        drop-locals)
+  "Return a copy of the current buffer.
+The copy preserves Org buffer-local variables, visibility and
+narrowing.
+
+IMPORTANT: The buffer copy may also have variable `buffer-file-name'
+copied.
+
+To prevent Emacs overwriting the original buffer file,
+`write-contents-functions' is set to \='(always).  Do not alter this
+variable and do not do anything that might alter it (like calling a
+major mode) to prevent data corruption.  Also, do note that Emacs may
+jump into the created buffer if the original file buffer is closed and
+then re-opened.  Making edits in the buffer copy may also trigger
+Emacs save dialog.  Prefer using `org-element-with-buffer-copy' macro
+when possible.
+
+When optional key TO-BUFFER is non-nil, copy into BUFFER.
+
+Optional keys DROP-VISIBILITY, DROP-NARROWING, DROP-CONTENTS, and
+DROP-LOCALS are passed to `org-element--generate-copy-script'."
+  (let ((copy-buffer-fun (org-element--generate-copy-script
+                          (current-buffer)
+                          :copy-unreadable 'do-not-check
+                          :drop-visibility drop-visibility
+                          :drop-narrowing drop-narrowing
+                          :drop-contents drop-contents
+                          :drop-locals drop-locals))
+	(new-buf (or to-buffer (generate-new-buffer (buffer-name)))))
+    (with-current-buffer new-buf
+      (funcall copy-buffer-fun)
+      (set-buffer-modified-p nil))
+    new-buf))
+
+(cl-defmacro org-element-with-buffer-copy ( &rest body
+                                            &key to-buffer drop-visibility
+                                            drop-narrowing drop-contents
+                                            drop-locals
+                                            &allow-other-keys)
+  "Apply BODY in a copy of the current buffer.
+The copy preserves local variables, visibility and contents of
+the original buffer.  Point is at the beginning of the buffer
+when BODY is applied.
+
+Optional keys can modify what is being copied and the generated buffer
+copy.  TO-BUFFER, DROP-VISIBILITY, DROP-NARROWING, DROP-CONTENTS, and
+DROP-LOCALS are passed as arguments to `org-element-copy-buffer'."
+  (declare (debug t))
+  (org-with-gensyms (buf-copy)
+    `(let ((,buf-copy (org-element-copy-buffer
+                       :to-buffer ,to-buffer
+                       :drop-visibility ,drop-visibility
+                       :drop-narrowing ,drop-narrowing
+                       :drop-contents ,drop-contents
+                       :drop-locals ,drop-locals)))
+       (unwind-protect
+	   (with-current-buffer ,buf-copy
+	     (goto-char (point-min))
+             (prog1
+	         (progn ,@body)
+               ;; `org-element-copy-buffer' carried the value of
+               ;; `buffer-file-name' from the original buffer.  When not
+               ;; killed, the new buffer copy may become a target of
+               ;; `find-file'.  Prevent this.
+               (setq buffer-file-name nil)))
+	 (and (buffer-live-p ,buf-copy)
+	      ;; Kill copy without confirmation.
+	      (progn (with-current-buffer ,buf-copy
+		       (restore-buffer-modified-p nil))
+                     (unless ,to-buffer
+		       (kill-buffer ,buf-copy))))))))
 
 
 ;;; Accessors and Setters
@@ -951,8 +1145,9 @@ CONTENTS is the contents of the footnote-definition."
 
 ;;;; Headline
 
-(defun org-element--get-node-properties (&optional at-point-p?)
+(defun org-element--get-node-properties (&optional at-point-p? parent)
   "Return node properties for headline or property drawer at point.
+The property values a deferred relative to PARENT element.
 Upcase property names.  It avoids confusion between properties
 obtained through property drawer and default properties from the
 parser (e.g. `:end' and :END:).  Return value is a plist.
@@ -960,7 +1155,7 @@ parser (e.g. `:end' and :END:).  Return value is a plist.
 When AT-POINT-P? is nil, assume that point as at a headline.  Otherwise
 parse properties for property drawer at point."
   (save-excursion
-    (let ((begin (point)))
+    (let ((begin (or (org-element-begin parent) (point))))
       (unless at-point-p?
         (forward-line)
         (when (looking-at-p org-element-planning-line-re) (forward-line)))
@@ -1063,7 +1258,7 @@ Return value is a plist."
      (setcar (cdr element)
              (nconc
               (nth 1 element)
-              (org-element--get-node-properties)))))
+              (org-element--get-node-properties nil element)))))
   ;; Return nil.
   nil)
 
@@ -1341,8 +1536,10 @@ Alter DATA by side effect."
   (with-current-buffer (org-element-property :buffer data)
     (org-with-wide-buffer
      (goto-char (point-min))
+     (org-skip-whitespace)
+     (forward-line 0)
      (while (and (org-at-comment-p) (bolp)) (forward-line))
-     (let ((props (org-element--get-node-properties t))
+     (let ((props (org-element--get-node-properties t data))
            (has-category? nil))
        (while props
          (org-element-put-property data (car props) (cadr props))
@@ -1381,6 +1578,8 @@ Return a new syntax node of `org-data' type containing `:begin',
                           (or
                            (org-with-wide-buffer
                             (goto-char (point-min))
+                            (org-skip-whitespace)
+                            (forward-line 0)
                             (while (and (org-at-comment-p) (bolp)) (forward-line))
                             (when (looking-at org-property-drawer-re)
                               (goto-char (match-end 0))
@@ -1412,6 +1611,8 @@ CONTENTS is the contents of the element."
 
 (defun org-element-inlinetask-parser (limit &optional raw-secondary-p)
   "Parse an inline task.
+
+Do not search past LIMIT.
 
 Return a new syntax node of `inlinetask' type containing `:title',
 `:begin', `:end', `:pre-blank', `:contents-begin' and `:contents-end',
@@ -1650,8 +1851,10 @@ CONTENTS is the contents of the element."
 ;;;; Plain List
 
 (defun org-element--list-struct (limit)
-  ;; Return structure of list at point.  Internal function.  See
-  ;; `org-list-struct' for details.
+"Return structure of list at point.
+Do not parse past LIMIT.
+
+Internal function.  See `org-list-struct' for details."
   (let ((case-fold-search t)
 	(top-ind limit)
 	(item-re (org-item-re))
@@ -3275,7 +3478,19 @@ properties.  Otherwise, return nil.
 
 Assume point is at the beginning of the entity."
   (catch 'no-object
-    (when (looking-at "\\\\\\(?:\\(?1:_ +\\)\\|\\(?1:there4\\|sup[123]\\|frac[13][24]\\|[a-zA-Z]+\\)\\(?2:$\\|{}\\|[^[:alpha:]]\\)\\)")
+    (when (looking-at
+           (rx "\\"
+               (or
+                ;; Special case: whitespace entities are matched by
+                ;; name only.
+                (group-n 1 (seq "_" (1+ " ")))
+                (seq
+                 (group-n 1
+                   (or "there4"
+                       (seq "sup" (in "123"))
+                       (seq "frac" (in "13") (in "24"))
+                       (1+ (in "a-zA-Z"))))
+                 (group-n 2 (or eol "{}" (not letter)))))))
       (save-excursion
 	(let* ((value (or (org-entity-get (match-string 1))
 			  (throw 'no-object nil)))
@@ -3899,24 +4114,25 @@ nil.
 
 Assume point is at the underscore."
   (save-excursion
-    (unless (bolp) (backward-char))
-    (when (looking-at org-match-substring-regexp)
-      (let ((bracketsp (if (match-beginning 4) t nil))
-	    (begin (match-beginning 2))
-	    (contents-begin (or (match-beginning 4)
-				(match-beginning 3)))
-	    (contents-end (or (match-end 4) (match-end 3)))
-	    (post-blank (progn (goto-char (match-end 0))
-			       (skip-chars-forward " \t")))
-	    (end (point)))
-	(org-element-create
-         'subscript
-	 (list :begin begin
-	       :end end
-	       :use-brackets-p bracketsp
-	       :contents-begin contents-begin
-	       :contents-end contents-end
-	       :post-blank post-blank))))))
+    (unless (bolp)
+      (backward-char)
+      (when (looking-at org-match-substring-regexp)
+        (let ((bracketsp (if (match-beginning 4) t nil))
+	      (begin (match-beginning 2))
+	      (contents-begin (or (match-beginning 4)
+				  (match-beginning 3)))
+	      (contents-end (or (match-end 4) (match-end 3)))
+	      (post-blank (progn (goto-char (match-end 0))
+			         (skip-chars-forward " \t")))
+	      (end (point)))
+	  (org-element-create
+           'subscript
+	   (list :begin begin
+	         :end end
+	         :use-brackets-p bracketsp
+	         :contents-begin contents-begin
+	         :contents-end contents-end
+	         :post-blank post-blank)))))))
 
 (defun org-element-subscript-interpreter (subscript contents)
   "Interpret SUBSCRIPT object as Org syntax.
@@ -4404,7 +4620,9 @@ element it has to parse."
                  (save-excursion
                    (forward-line -1)   ; faster than beginning-of-line
                    (skip-chars-forward "[:blank:]") ; faster than looking-at-p
-                   (not (eolp)))) ; very cheap
+                   (or (not (eolp)) ; very cheap
+                       ;; Document-wide property drawer may be preceded by blank lines.
+                       (progn (skip-chars-backward " \t\n\r") (bobp)))))
 	        (_ nil))
 	      (looking-at-p org-property-drawer-re))
 	 (org-element-property-drawer-parser limit))
@@ -4416,6 +4634,10 @@ element it has to parse."
 	;; Inlinetask.
 	(at-task? (org-element-inlinetask-parser limit raw-secondary-p))
 	;; From there, elements can have affiliated keywords.
+        ;; Note an edge case with a keyword followed by element that
+        ;; cannot have affiliated keywords attached (the above).
+        ;; `org-element--collect-affiliated-keywords' must have a
+        ;; special check to fall back to parsing proper keyword.
 	(t (let ((affiliated (org-element--collect-affiliated-keywords
 			      limit (memq granularity '(nil object)))))
              (cond
@@ -4458,7 +4680,7 @@ element it has to parse."
 		 (org-element-dynamic-block-parser limit affiliated))
 	        ((match-beginning 8)
 		 (org-element-keyword-parser limit affiliated))
-	        ((match-beginning 4)
+	        ((match-beginning 4) ;; #+, not matching a specific element.
 		 (org-element-paragraph-parser limit affiliated))
 	        ;; Footnote Definition.
 	        ((match-beginning 9)
@@ -4596,7 +4818,14 @@ When PARSE is non-nil, values from keywords belonging to
 	  (forward-line)))
       ;; If affiliated keywords are orphaned: move back to first one.
       ;; They will be parsed as a paragraph.
-      (when (looking-at-p "[ \t]*$") (goto-char origin) (setq output nil))
+      (when (or (looking-at-p "[ \t]*$")
+                ;; Affiliated keywords are not allowed before comments.
+                (looking-at-p org-comment-regexp)
+                ;; Clock lines are also not allowed.
+                (looking-at-p org-clock-line-re)
+                ;; Inlinetasks not allowed.
+                (looking-at-p "^\\*+ "))
+        (goto-char origin) (setq output nil))
       ;; Return value.
       (cons origin output))))
 
@@ -4693,27 +4922,25 @@ If STRING is the empty string or nil, return nil."
   (cond
    ((not string) nil)
    ((equal string "") nil)
-   (t (let ((local-variables (buffer-local-variables))
-            rtn)
-	(with-temp-buffer
-	  (dolist (v local-variables)
-	    (ignore-errors
-	      (if (symbolp v) (makunbound v)
-		;; Don't set file name to avoid mishandling hooks (bug#44524)
-		(unless (memq (car v) '(buffer-file-name buffer-file-truename))
-		  (set (make-local-variable (car v)) (cdr v))))))
-	  ;; Transferring local variables may put the temporary buffer
-	  ;; into a read-only state.  Make sure we can insert STRING.
-	  (let ((inhibit-read-only t)) (insert string))
-	  ;; Prevent "Buffer *temp* modified; kill anyway?".
-	  (restore-buffer-modified-p nil)
-          (setq rtn
-	        (org-element--parse-objects
-	         (point-min) (point-max) nil restriction parent))
-          ;; Resolve deferred.
-          (org-element-map rtn t
-            (lambda (el) (org-element-properties-resolve el t)))
-          rtn)))))
+   (t (let (rtn)
+	(org-element-with-buffer-copy
+         :to-buffer (org-get-buffer-create " *Org parse*" t)
+         :drop-contents t
+         :drop-visibility t
+         :drop-narrowing t
+         :drop-locals nil
+	 ;; Transferring local variables may put the temporary buffer
+	 ;; into a read-only state.  Make sure we can insert STRING.
+	 (let ((inhibit-read-only t)) (erase-buffer) (insert string))
+	 ;; Prevent "Buffer *temp* modified; kill anyway?".
+	 (restore-buffer-modified-p nil)
+         (setq rtn
+	       (org-element--parse-objects
+	        (point-min) (point-max) nil restriction parent))
+         ;; Resolve deferred.
+         (org-element-map rtn t
+           (lambda (el) (org-element-properties-resolve el t)))
+         rtn)))))
 
 (defun org-element-map
     ( data types fun
@@ -4732,7 +4959,7 @@ one argument: the element or object itself.
 
 When TYPES is t, call FUN for all the elements and objects.
 
-FUN can also be a lisp form.  The form will be evaluated as function
+FUN can also be a Lisp form.  The form will be evaluated as function
 with symbol `node' bound to the current node.
 
 When optional argument INFO is non-nil, it should be a plist
@@ -5450,6 +5677,13 @@ of `org-element--cache-self-verify-frequency'.
 When set to symbol `backtrace', record and display backtrace log if
 any inconsistency is detected.")
 
+(defvar org-element--cache-self-verify-before-persisting nil
+  "Perform consistency checks for the cache before writing to disk.
+
+When non-nil, signal an error an show backtrace if cache contains
+incorrect elements.  `org-element--cache-self-verify' must be set to
+symbol `backtrace' to have non-empty backtrace displayed.")
+
 (defvar org-element--cache-self-verify-frequency 0.03
   "Frequency of cache element verification.
 
@@ -5469,8 +5703,8 @@ to be correct.  Setting this to a value less than 0.0001 is useless.")
   "Detail level of the diagnostics.")
 
 (defvar-local org-element--cache-diagnostics-ring nil
-  "Ring containing last `org-element--cache-diagnostics-ring-size'
-cache process log entries.")
+  "Ring containing cache process log entries.
+The ring size is `org-element--cache-diagnostics-ring-size'.")
 
 (defvar org-element--cache-diagnostics-ring-size 5000
   "Size of `org-element--cache-diagnostics-ring'.")
@@ -5569,17 +5803,6 @@ See `org-element--cache-key' for more information.")
 (defvar-local org-element--cache-last-buffer-size nil
   "Last value of `buffer-size' for registered changes.")
 
-(defconst org-element--cache-variables
-  '( org-element--cache org-element--cache-size
-     org-element--headline-cache org-element--headline-cache-size
-     org-element--cache-hash-left org-element--cache-hash-right
-     org-element--cache-sync-requests org-element--cache-sync-timer
-     org-element--cache-sync-keys-value org-element--cache-change-tic
-     org-element--cache-last-buffer-size
-     org-element--cache-gapless
-     org-element--cache-change-warning)
-  "List of variable symbols holding cache state.")
-
 (defvar org-element--cache-non-modifying-commands
   '(org-agenda
     org-agenda-redo
@@ -5633,7 +5856,8 @@ better to remove the commands advised in such a way from this list.")
      (prin1-to-string ,element)))
 
 (defmacro org-element--cache-log-message (format-string &rest args)
-  "Add a new log message for org-element-cache."
+  "Add a new log message for org-element-cache.
+FORMAT-STRING and ARGS are the same arguments as in `foramt'."
   `(when (or org-element--cache-diagnostics
              (eq org-element--cache-self-verify 'backtrace))
      (let* ((format-string (concat (format "org-element-cache diagnostics(%s): "
@@ -5648,7 +5872,8 @@ better to remove the commands advised in such a way from this list.")
          (ring-insert org-element--cache-diagnostics-ring format-string)))))
 
 (defmacro org-element--cache-warn (format-string &rest args)
-  "Raise warning for org-element-cache."
+  "Raise warning for org-element-cache.
+FORMAT-STRING and ARGS are the same arguments as in `format'."
   `(let* ((format-string (funcall #'format ,format-string ,@args))
           (format-string
            (if (or (not org-element--cache-diagnostics-ring)
@@ -5828,7 +6053,9 @@ This function assumes `org-element--headline-cache' is a valid AVL tree."
 ;; declaration on top would require restructuring the whole cache
 ;; section.
 (defun org-element--cache-active-p (&optional called-from-cache-change-func-p)
-  "Non-nil when cache is active in current buffer."
+  "Non-nil when cache is active in current buffer.
+When CALLED-FROM-CACHE-CHANGE-FUNC-P is non-nil, do not assert cache
+consistency with buffer modifications."
   (org-with-base-buffer nil
     (and org-element-use-cache
          (or org-element--cache
@@ -6009,7 +6236,7 @@ If this warning appears regularly, please report the warning text to Org mode ma
        (org-element-begin element)
        (org-element-property :org-element--cache-sync-key element))
       (org-element-cache-reset)
-      (throw 'quit nil))
+      (throw 'org-element--cache-quit nil))
     (or (avl-tree-delete org-element--cache element)
         (progn
           ;; This should not happen, but if it is, would be better to know
@@ -6022,7 +6249,7 @@ If this warning appears regularly, please report the warning text to Org mode ma
            (org-element-begin element)
            (org-element-property :org-element--cache-sync-key element))
           (org-element-cache-reset)
-          (throw 'quit nil)))))
+          (throw 'org-element--cache-quit nil)))))
 
 ;;;; Synchronization
 
@@ -6191,7 +6418,11 @@ The buffer is: %s\n Current command: %S\n Backtrace:\n%S"
 	    ;; Otherwise, reset keys.
 	    (if org-element--cache-sync-requests
 	        (org-element--cache-set-timer buffer)
-              (setq org-element--cache-change-warning nil)
+              ;; NOTE: We cannot reset
+              ;; `org-element--cache-change-warning' here as it might
+              ;; still be needed when synchronization is called by
+              ;; `org-element--cache-submit-request' before
+              ;; `org-element--cache-for-removal'.
               (setq org-element--cache-sync-keys-value (1+ org-element--cache-sync-keys-value)))))))))
 
 (defun org-element--cache-process-request
@@ -6692,7 +6923,7 @@ the expected result."
                  (setq org-element--cache-interrupt-C-g-count 0)
                  (org-element-cache-reset)
                  (error "org-element: Parsing aborted by user.  Cache has been cleared.
-If you observe Emacs hangs frequently, please report this to Org mode mailing list (M-x org-submit-bug-report)."))
+If you observe Emacs hangs frequently, please report this to Org mode mailing list (M-x org-submit-bug-report)"))
                (message (substitute-command-keys
                          "`org-element--parse-buffer': Suppressed `\\[keyboard-quit]'.  Press `\\[keyboard-quit]' %d more times to force interruption.")
                         (- org-element--cache-interrupt-C-g-max-count
@@ -6881,7 +7112,7 @@ The function returns the new value of `org-element--cache-change-warning'."
 
 (defun org-element--cache-after-change (beg end pre)
   "Update buffer modifications for current buffer.
-BEG and END are the beginning and end of the range of changed
+BEG, END, and PRE are the beginning and end of the range of changed
 text, and the length in bytes of the pre-change text replaced by
 that range.  See `after-change-functions' for more information."
   (org-with-base-buffer nil
@@ -6931,7 +7162,7 @@ when buffer modifications are mixed with cache requests.  However,
 large automated edits inserting/deleting many headlines are somewhat
 slower by default (as in `org-archive-subtree').  Let-binding this
 variable to non-nil will reduce cache latency after every singular edit
-(`after-change-functions') at the cost of slower cache queries.")
+\(`after-change-functions') at the cost of slower cache queries.")
 (defun org-element--cache-for-removal (beg end offset)
   "Return first element to remove from cache.
 
@@ -7036,7 +7267,8 @@ known element in cache (it may start after END)."
                      '(:contents-end :end :robust-end)
                    '(:contents-end :end)))
                 (org-element--cache-log-message
-                 "Shifting end positions of robust parent: %S"
+                 "Shifting end positions of robust parent (warning %S): %S"
+                 org-element--cache-change-warning
                  (org-element--format-element up)))
             (unless (or
                      ;; UP is non-robust.  Yet, if UP is headline, flagging
@@ -7058,7 +7290,8 @@ known element in cache (it may start after END)."
                                                   (org-element-headline-parser nil 'fast))))))
                             (when (org-element-type-p current 'headline)
                               (org-element--cache-log-message
-                               "Found non-robust headline that can be updated individually: %S"
+                               "Found non-robust headline that can be updated individually (warning %S): %S"
+                               org-element--cache-change-warning
                                (org-element--format-element current))
                               (org-element-set up current org-element--cache-element-properties)
                               t)))
@@ -7339,7 +7572,12 @@ The element is: %S\n The real element is: %S\n Cache around :begin:\n%S\n%S\n%S"
 ;;; Cache persistence
 
 (defun org-element--cache-persist-before-write (container &optional associated)
-  "Sync cache before saving."
+  "Sync element cache for CONTAINER and ASSOCIATED item before saving.
+This function is intended to be used in `org-persist-before-write-hook'.
+
+Prevent writing to disk cache when cache is disabled in the CONTAINER
+buffer.  Otherwise, cleanup cache sync keys, unreadable :buffer
+properties, and verify cache consistency."
   (when (equal container '(elisp org-element--cache))
     (if (and org-element-use-cache
              (plist-get associated :file)
@@ -7359,45 +7597,70 @@ The element is: %S\n The real element is: %S\n Cache around :begin:\n%S\n%S\n%S"
                     (lambda (el2)
                       (unless (org-element-type-p el2 'plain-text)
                         (org-element-put-property el2 :buffer nil)))
-                    nil nil nil 'with-affiliated 'no-undefer))
+                    nil nil nil 'with-affiliated 'no-undefer)
+                  (let ((org-element--cache-self-verify-frequency 1.0))
+                    (when (and org-element--cache-self-verify-before-persisting
+                               (org-element--cache-verify-element el))
+                      (error "Cache verification failed: aborting"))))
                 org-element--cache)
                nil)
             'forbid))
       'forbid)))
 
 (defun org-element--cache-persist-before-read (container &optional associated)
-  "Avoid reading cache before Org mode is loaded."
+  "Avoid reading cache for CONTAINER and ASSOCIATED before Org mode is loaded.
+This function is intended to be used in `org-persist-before-read-hook'.
+
+Also, prevent reading cache when the buffer CONTAINER hash is not
+consistent with the cache."
   (when (equal container '(elisp org-element--cache))
+    (org-element--cache-log-message "Loading persistent cache for %s" (plist-get associated :file))
     (if (not (and (plist-get associated :file)
                 (get-file-buffer (plist-get associated :file))))
-        'forbid
+        (progn
+          (org-element--cache-log-message "%s does not have a buffer: not loading cache" (plist-get associated :file))
+          'forbid)
       (with-current-buffer (get-file-buffer (plist-get associated :file))
         (unless (and org-element-use-cache
                      org-element-cache-persistent
                      (derived-mode-p 'org-mode)
                      (equal (secure-hash 'md5 (current-buffer))
                             (plist-get associated :hash)))
+          (org-element--cache-log-message "Cache is not current (or persistence is disabled) in %s" (plist-get associated :file))
           'forbid)))))
 
 (defun org-element--cache-persist-after-read (container &optional associated)
-  "Setup restored cache."
+  "Setup restored cache for CONTAINER and ASSOCIATED.
+Re-fill :buffer properties for cache elements (buffer objects cannot
+be written onto disk).  Also, perform some consistency checks to
+prevent loading corrupted cache."
   (when (and (plist-get associated :file)
              (get-file-buffer (plist-get associated :file)))
     (with-current-buffer (get-file-buffer (plist-get associated :file))
       (when (and org-element-use-cache org-element-cache-persistent)
-        (when (and (equal container '(elisp org-element--cache)) org-element--cache)
-          ;; Restore `:buffer' property.
-          (avl-tree-mapc
-           (lambda (el)
-             (org-element-map el t
-               (lambda (el2)
-                 (unless (org-element-type-p el2 'plain-text)
-                   (org-element-put-property el2 :buffer (current-buffer))))
-               nil nil nil 'with-affiliated 'no-undefer))
-           org-element--cache)
-          (setq-local org-element--cache-size (avl-tree-size org-element--cache)))
-        (when (and (equal container '(elisp org-element--headline-cache)) org-element--headline-cache)
-          (setq-local org-element--headline-cache-size (avl-tree-size org-element--headline-cache)))))))
+        (catch 'abort
+          (when (and (equal container '(elisp org-element--cache)) org-element--cache)
+            ;; Restore `:buffer' property.
+            (avl-tree-mapc
+             (lambda (el)
+               (org-element-map el t
+                 (lambda (el2)
+                   (unless (org-element-type-p el2 'plain-text)
+                     (org-element-put-property el2 :buffer (current-buffer))))
+                 nil nil nil 'with-affiliated 'no-undefer)
+               (org-element--cache-log-message
+                "Recovering persistent cached element: %S"
+                (org-element--format-element el))
+               (when (and (not (org-element-parent el)) (not (org-element-type-p el 'org-data)))
+                 (org-element--cache-warn
+                  "Got element without parent when loading cache from disk.  Not using this persistent cache.
+Please report it to Org mode mailing list (M-x org-submit-bug-report).\n%S" el)
+                 (org-element-cache-reset)
+                 (throw 'abort t)))
+             org-element--cache)
+            (setq-local org-element--cache-size (avl-tree-size org-element--cache)))
+          (when (and (equal container '(elisp org-element--headline-cache)) org-element--headline-cache)
+            (setq-local org-element--headline-cache-size (avl-tree-size org-element--headline-cache))))))))
 
 (add-hook 'org-persist-before-write-hook #'org-element--cache-persist-before-write)
 (add-hook 'org-persist-before-read-hook #'org-element--cache-persist-before-read)
@@ -7520,8 +7783,8 @@ function modified the buffer.")
 (cl-defun org-element-cache-map (func &key (granularity 'headline+inlinetask) restrict-elements
                                       next-re fail-re from-pos (to-pos (point-max-marker)) after-element limit-count
                                       narrow)
-  "Map all elements in current buffer with FUNC according to
-GRANULARITY.  Collect non-nil return values into result list.
+  "Map all elements in current buffer with FUNC according to GRANULARITY.
+Collect non-nil return values into result list.
 
 FUNC should accept a single argument - the element.
 
@@ -7567,7 +7830,7 @@ argument of FUNC.  Changes to elements made in FUNC will also alter
 the cache."
   (org-element-with-enabled-cache
     (unless (org-element--cache-active-p)
-      (error "Cache must be active."))
+      (error "Cache must be active"))
     (unless (memq granularity '( headline headline+inlinetask
                                  greater-element element))
       (error "Unsupported granularity: %S" granularity))
@@ -8044,8 +8307,8 @@ This function may modify the match data."
     (setq epom (or epom (point)))
     (org-with-point-at epom
       (unless (derived-mode-p 'org-mode)
-        (error "`org-element-at-point' cannot be used in non-Org buffer %S (%s)"
-               (current-buffer) major-mode))
+        (warn "`org-element-at-point' cannot be used in non-Org buffer %S (%s)"
+              (current-buffer) major-mode))
       ;; Allow re-parsing when the command can benefit from it.
       (when (and cached-only
                  (memq this-command org-element--cache-non-modifying-commands))

@@ -53,17 +53,21 @@ by `org-edit-src-code'.")
   "Expand BODY according to PARAMS, return the expanded body."
   (let ((vars (org-babel--get-vars params))
 	(print-level nil)
-	(print-length nil))
+	(print-length nil)
+        (prologue (cdr (assq :prologue params)))
+        (epilogue (cdr (assq :epilogue params))))
     (if (null vars) (concat body "\n")
-      (format "(let (%s)\n%s\n)"
+      (format "(let (%s)\n%s%s%s\n)"
 	      (mapconcat
 	       (lambda (var)
 		 (format "%S" `(,(car var) ',(cdr var))))
 	       vars "\n      ")
-	      body))))
+              (if prologue (concat prologue "\n      ") "")
+	      body
+              (if epilogue (concat "\n      " epilogue "\n") "")))))
 
 (defun org-babel-execute:emacs-lisp (body params)
-  "Execute a block of emacs-lisp code with Babel."
+  "Execute emacs-lisp code BODY according to PARAMS."
   (let* ((lexical (cdr (assq :lexical params)))
 	 (result-params (cdr (assq :result-params params)))
 	 (body (format (if (member "output" result-params)
@@ -100,7 +104,8 @@ and the LEXICAL argument to `eval'."
 (defun org-babel-edit-prep:emacs-lisp (info)
   "Set `lexical-binding' in Org edit buffer.
 Set `lexical-binding' in Org edit buffer according to the
-corresponding :lexical source block argument."
+corresponding :lexical source block argument provide in the INFO
+channel, as returned by `org-babel-get-src-block-info'."
   (setq lexical-binding
         (org-babel-emacs-lisp-lexical
          (org-babel-read

@@ -1309,9 +1309,9 @@ buffer."
 	 (setq ,to-be-removed (current-buffer))
 	 (goto-char (point-min))
 	 (while (re-search-forward "src_\\S-" nil t)
-	   (let ((,datum (save-match-data (org-element-context))))
+	   (let ((,datum (org-element-context)))
 	     (when (org-element-type-p ,datum 'inline-src-block)
-	       (goto-char (match-beginning 0))
+	       (goto-char (org-element-begin ,datum))
 	       (let ((,end (copy-marker (org-element-end ,datum))))
 		 ,@body
 		 (goto-char ,end)
@@ -1337,9 +1337,10 @@ buffer."
 	 (setq ,to-be-removed (current-buffer))
 	 (goto-char (point-min))
 	 (while (re-search-forward "call_\\S-\\|^[ \t]*#\\+CALL:" nil t)
-	   (let ((,datum (save-match-data (org-element-context))))
+	   (let ((,datum (org-element-context)))
 	     (when (org-element-type-p ,datum '(babel-call inline-babel-call))
-	       (goto-char (match-beginning 0))
+	       (goto-char (or (org-element-post-affiliated datum)
+                              (org-element-begin datum)))
 	       (let ((,end (copy-marker (org-element-end ,datum))))
 		 ,@body
 		 (goto-char ,end)
@@ -1366,11 +1367,12 @@ buffer."
 	 (goto-char (point-min))
 	 (while (re-search-forward
 		 "\\(call\\|src\\)_\\|^[ \t]*#\\+\\(BEGIN_SRC\\|CALL:\\)" nil t)
-	   (let ((,datum (save-match-data (org-element-context))))
+	   (let ((,datum (org-element-context)))
 	     (when (org-element-type-p
                     ,datum
                     '(babel-call inline-babel-call inline-src-block src-block))
-	       (goto-char (match-beginning 0))
+	       (goto-char (or (org-element-post-affiliated ,datum)
+                              (org-element-begin ,datum)))
 	       (let ((,end (copy-marker (org-element-end ,datum))))
 		 ,@body
 		 (goto-char ,end)
@@ -2013,12 +2015,12 @@ buffer or nil if no such result exists."
 
 (defun org-babel-result-names (&optional file)
   "Return the names of results in FILE or the current buffer."
-  (save-excursion
-    (when file (find-file file)) (goto-char (point-min))
-    (let ((case-fold-search t) names)
+  (with-current-buffer (if file (find-file-noselect file) (current-buffer))
+    (org-with-point-at 1
+      (let ((case-fold-search t) names)
       (while (re-search-forward org-babel-result-w-name-regexp nil t)
 	(setq names (cons (match-string-no-properties 9) names)))
-      names)))
+      names))))
 
 ;;;###autoload
 (defun org-babel-next-src-block (&optional arg)
@@ -2050,6 +2052,9 @@ With optional prefix argument ARG, jump backward ARG many source blocks."
 
 (defun org-babel-demarcate-block (&optional arg)
   "Wrap or split the code in the region or on the point.
+
+With prefix argument ARG, also create a new heading at point.
+
 When called from inside of a code block the current block is
 split.  When called from outside of a code block a new code block
 is created.  In both cases if the region is demarcated and if the
@@ -2345,7 +2350,9 @@ If the path of the link is a file path it is expanded using
      (t raw))))
 
 (defun org-babel-format-result (result &optional sep)
-  "Format RESULT for writing to file."
+  "Format RESULT for writing to file.
+When RESULT is a list, write it as a table, use tab or SEP as column
+separator."
   (let ((echo-res (lambda (r) (if (stringp r) r (format "%S" r)))))
     (if (listp result)
 	;; table result
@@ -2434,7 +2441,7 @@ INFO may provide the values of these header arguments (in the
           using the argument supplied to specify the export block
           or snippet type."
   (cond ((stringp result)
-	 (setq result (org-no-properties result))
+	 (setq result (substring-no-properties result))
 	 (when (member "file" result-params)
 	   (setq result
                  (org-babel-result-to-file
@@ -2693,7 +2700,10 @@ INFO may provide the values of these header arguments (in the
 	    (set-marker visible-end nil)))))))
 
 (defun org-babel-remove-result (&optional info keep-keyword)
-  "Remove the result of the current source block."
+  "Remove the result of the current source block.
+INFO argument is currently ignored.
+When KEEP-KEYWORD is non-nil, keep the #+RESULT keyword and just remove
+the rest of the result."
   (interactive)
   (let ((location (org-babel-where-is-src-block-result nil info))
 	(case-fold-search t))
@@ -2709,7 +2719,7 @@ INFO may provide the values of these header arguments (in the
 	   (progn (forward-line) (org-babel-result-end))))))))
 
 (defun org-babel-remove-inline-result (&optional datum)
-  "Remove the result of the current inline-src-block or babel call.
+  "Remove the result of DATUM or the current inline-src-block or babel call.
 The result must be wrapped in a `results' macro to be removed.
 Leading white space is trimmed."
   (interactive)
@@ -2732,12 +2742,12 @@ Leading white space is trimmed."
 		   (skip-chars-backward " \t\n")
 		   (point)))))))))
 
-(defun org-babel-remove-result-one-or-many (x)
+(defun org-babel-remove-result-one-or-many (arg)
   "Remove the result of the current source block.
-If called with a prefix argument, remove all result blocks
-in the buffer."
+If called with prefix argument ARG, remove all result blocks in the
+buffer."
   (interactive "P")
-  (if x
+  (if arg
       (org-babel-map-src-blocks nil (org-babel-remove-result))
     (org-babel-remove-result)))
 
@@ -2809,7 +2819,10 @@ specified as an an \"attachment:\" style link."
 	      (if description (concat "[" description "]") "")))))
 
 (defun org-babel-examplify-region (beg end &optional results-switches inline)
-  "Comment out region using the inline `==' or `: ' org example quote."
+  "Comment out region BEG..END using the inline `==' or `: ' org example quote.
+When INLINE is non-nil, use the inline verbatim markup.
+When INLINE is nil and RESULTS-SWITCHES is non-nil, RESULTS-SWITCHES is
+used as a string to be appended to #+begin_example line."
   (interactive "*r")
   (let ((maybe-cap
 	 (lambda (str)
@@ -2991,6 +3004,12 @@ CONTEXT may be one of :tangle, :export or :eval."
 See `org-babel-expand-noweb-references--cache'.")
 (defun org-babel-expand-noweb-references (&optional info parent-buffer)
   "Expand Noweb references in the body of the current source code block.
+
+When optional argument INFO is non-nil, use the block defined by INFO
+instead.
+
+The block is assumed to be located in PARENT-BUFFER or current buffer
+\(when PARENT-BUFFER is nil).
 
 For example the following reference would be replaced with the
 body of the source-code block named `example-block'.
@@ -3312,7 +3331,8 @@ SEPARATOR is passed to `org-table-convert-region', which see."
       (_ result))))
 
 (defun org-babel-string-read (cell)
-  "Strip nested \"s from around strings."
+  "Strip nested \"s from around CELL string.
+When CELL is not a string, return CELL."
   (org-babel-read (or (and (stringp cell)
                            (string-match "^[[:space:]]*\"\\(.+\\)\"[[:space:]]*$" cell)
                            (match-string 1 cell))
@@ -3364,7 +3384,10 @@ Emacs shutdown.")
   :type 'string)
 
 (defmacro org-babel-result-cond (result-params scalar-form &rest table-forms)
-  "Call the code to parse raw string results according to RESULT-PARAMS."
+  "Call the code to parse raw string results according to RESULT-PARAMS.
+Do nothing with :results discard.
+Execute SCALAR-FORM when result should be treated as a string.
+Execute TABLE-FORMS when result should be considered sexp and parsed."
   (declare (indent 1) (debug t))
   (org-with-gensyms (params)
     `(let ((,params ,result-params))
@@ -3411,7 +3434,7 @@ value of `org-babel-temporary-directory'."
 (defun org-babel-temp-stable-file (data prefix &optional suffix)
   "Create a temporary file in the `org-babel-remove-temporary-stable-directory'.
 The file name is stable with respect to DATA.  The file name is
-constructed like the following: PREFIXDATAhashSUFFIX."
+constructed like the following: <PREFIX><DATAhash><SUFFIX>."
   (let ((path
          (format
           "%s%s%s%s"

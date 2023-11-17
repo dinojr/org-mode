@@ -4869,6 +4869,14 @@ The following commands are available:
      (vconcat (mapcar (lambda (c) (make-glyph-code c 'org-ellipsis))
 		      org-ellipsis)))
     (setq buffer-display-table org-display-table))
+  ;; Initialize cache.
+  (org-element-cache-reset)
+  (when (and org-element-cache-persistent
+             org-element-use-cache)
+    (org-persist-load
+     `((elisp org-element--cache) (version ,org-element-cache-version))
+     (current-buffer)
+     'match-hash :read-related t))
   (org-set-regexps-and-options)
   (org-set-font-lock-defaults)
   (when (and org-tag-faces (not org-tags-special-faces-re))
@@ -4887,14 +4895,6 @@ The following commands are available:
   (add-hook 'kill-buffer-hook 'org-check-running-clock nil 'local)
   ;; Check for invisible edits.
   (org-fold--advice-edit-commands)
-  ;; Initialize cache.
-  (org-element-cache-reset)
-  (when (and org-element-cache-persistent
-             org-element-use-cache)
-    (org-persist-load
-     `((elisp org-element--cache) (version ,org-element-cache-version))
-     (current-buffer)
-     'match-hash :read-related t))
   ;; Initialize macros templates.
   (org-macro-initialize-templates)
   ;; Initialize radio targets.
@@ -8495,13 +8495,20 @@ a link."
 		     (org-attach-reveal-in-emacs)
 		   (org-attach-reveal))))
 	      (`(,links . ,links-end)
-	       (dolist (link (if (stringp links) (list links) links))
-		 (search-forward link nil links-end)
-		 (goto-char (match-beginning 0))
-                 ;; When opening file link, current buffer may be
-                 ;; altered.
-                 (save-current-buffer
-		   (org-open-at-point arg))))))))
+               (let ((link-marker (make-marker))
+                     (last-moved-marker (point-marker)))
+	         (dolist (link (if (stringp links) (list links) links))
+		   (search-forward link nil links-end)
+		   (goto-char (match-beginning 0))
+                   (move-marker link-marker (point))
+                   (save-excursion
+		     (org-open-at-point arg)
+                     (unless (equal (point-marker) link-marker)
+                       (move-marker last-moved-marker (point-marker)))))
+                 ;; If any of the links moved point in current buffer,
+                 ;; move to the point corresponding to such latest link.
+                 ;; Otherwise, restore the original point position.
+                 (goto-char last-moved-marker)))))))
        ;; On a footnote reference or at definition's label.
        ((or (eq type 'footnote-reference)
 	    (and (eq type 'footnote-definition)
@@ -10113,7 +10120,10 @@ This function is run automatically after each state change to a DONE state."
 		      (let ((nshiftmax 10)
 			    (nshift 0))
 			(while (or (= nshift 0)
-				   (not (time-less-p nil time)))
+				   (if (equal what "h")
+				       (not (time-less-p nil time))
+				     (>= (org-today)
+					 (time-to-days time))))
 			  (when (= nshiftmax (cl-incf nshift))
 			    (or (y-or-n-p
 				 (format "%d repeater intervals were not \
@@ -11328,15 +11338,14 @@ See also `org-scan-tags'."
               "\\(?2:"
                   ;; tag regexp match
                   "{[^}]+}\\|"
-                  ;; LEVEL property match.  For sake of consistency,
-                  ;; recognize starred operators here as well.  We do
-                  ;; not need to process them below, however, since
-                  ;; the LEVEL property is always present.
-                  "LEVEL\\(?3:" opre "\\)\\*?\\(?4:[0-9]+\\)\\|"
-                  ;; regular property match
+                  ;; property match.  Try to keep this subre generic
+                  ;; and rather handle special properties like LEVEL
+                  ;; and CATEGORY further below.  This ensures that
+                  ;; the same quoting mechanics can be used for all
+                  ;; property names.
                   "\\(?:"
                       ;; property name [1]
-                      "\\(?5:[[:alnum:]_-]+\\)"
+                      "\\(?5:\\(?:[[:alnum:]_]+\\|\\\\[^[:space:]]\\)+\\)"
                       ;; operator, optionally starred
                       "\\(?6:" opre "\\)\\(?7:\\*\\)?"
                       ;; operand (regexp, double-quoted string,
@@ -11353,13 +11362,19 @@ See also `org-scan-tags'."
          (start 0)
          tagsmatch todomatch tagsmatcher todomatcher)
 
-    ;; [1] The minus characters in property names do *not* conflict
-    ;; with the exclusion operator above, since the mandatory
-    ;; following operator distinguishes these both cases.
-    ;; Accordingly, minus characters do not need any special quoting,
-    ;; even if https://orgmode.org/list/87jzv67k3p.fsf@localhost and
-    ;; commit 19b0e03f32c6032a60150fc6cb07c6f766cb3f6c suggest
-    ;; otherwise.
+    ;; [1] The history of this particular subre:
+    ;; - \\([[:alnum:]_]+\\) [pre-19b0e03]
+    ;;   Does not allow for minus characters in property names.
+    ;; - "\\(\\(?:[[:alnum:]_]+\\(?:\\\\-\\)*\\)+\\)" [19b0e03]
+    ;;   Incomplete fix of above issue, still resulting in, e.g.,
+    ;;   https://orgmode.org/list/87jzv67k3p.fsf@localhost.
+    ;; - "\\(?5:[[:alnum:]_-]+\\)" [f689eb4]
+    ;;   Allows for unquoted minus characters in property names, but
+    ;;   conflicts with searches like -TAG-PROP="VALUE".  See
+    ;;   https://orgmode.org/list/87h6oq2nu1.fsf@gmail.com.
+    ;; - current subre
+    ;;   Like second solution, but with proper unquoting and allowing
+    ;;   for all possible characters in property names to be quoted.
 
     ;; Expand group tags.
     (setq match (org-tags-expand match))
@@ -11404,22 +11419,28 @@ See also `org-scan-tags'."
 		   ;; exact tag match in [3].
 		   (tag (match-string 2 term))
 		   (regexp (eq (string-to-char tag) ?{))
-		   (levelp (match-end 4))
 		   (propp (match-end 5))
 		   (mm
 		    (cond
 		     (regexp			; [2]
                       `(with-syntax-table org-mode-tags-syntax-table
                          (org-match-any-p ,(substring tag 1 -1) tags-list)))
-		     (levelp
-		      `(,(org-op-to-function (match-string 3 term))
-			level
-			,(string-to-number (match-string 4 term))))
 		     (propp
-		      (let* (;; Convert property name to an Elisp
+		      (let* (;; Determine property name.
+                             (pn (upcase
+                                  (save-match-data
+                                    (replace-regexp-in-string
+                                     "\\\\\\(.\\)" "\\1"
+                                     (match-string 5 term)
+                                     t nil))))
+                             ;; Convert property name to an Elisp
 			     ;; accessor for that property (aka. as
-			     ;; getter value).
-			     (gv (pcase (upcase (match-string 5 term))
+			     ;; getter value).  Symbols LEVEL and TODO
+			     ;; referenced below get bound by the
+			     ;; matcher that this function returns.
+			     (gv (pcase pn
+				   ("LEVEL"
+                                    '(number-to-string level))
 				   ("CATEGORY"
 				    '(org-get-category (point)))
 				   ("TODO" 'todo)
@@ -11888,6 +11909,26 @@ Also insert END."
     (put-text-property 0 (length s) 'face '(secondary-selection org-tag) s)
     (org-overlay-display org-tags-overlay (concat prefix s))))
 
+(defun org--add-or-remove-tag (tag current-tags &optional groups)
+  "Add or remove TAG entered by user to/from CURRENT-TAGS.
+Return the modified CURRENT-TAGS.
+
+When TAG is present in CURRENT-TAGS, remove it.  Otherwise, add it.
+When TAG is a part of a tag group from GROUPS, make sure that no
+exclusive tags from the same group remain in CURRENT-TAGS.
+
+CURRENT-TAGS may be modified by side effect."
+  (if (member tag current-tags)
+      ;; Remove the tag.
+      (delete tag current-tags)
+    ;; Add the tag.  If the tag is from a tag
+    ;; group, exclude selected alternative tags
+    ;; from the group, if any.
+    (dolist (g groups)
+      (when (member tag g)
+	(dolist (x g) (setq current-tags (delete x current-tags)))))
+    (cons tag current-tags)))
+
 (defvar org-last-tag-selection-key nil)
 (defun org-fast-tag-selection (current-tags inherited-tags tag-table &optional todo-table)
   "Fast tag selection with single keys.
@@ -12130,9 +12171,7 @@ Returns the new tags string, or nil to not change the current settings."
                      (setq current-tag (completing-read "Tag: " tab-tags))
 		     (when (string-match "\\S-" current-tag)
 		       (cl-pushnew (list current-tag) tab-tags :test #'equal)
-		       (if (member current-tag current-tags)
-			   (setq current-tags (delete current-tag current-tags))
-		         (push current-tag current-tags)))
+                       (setq current-tags (org--add-or-remove-tag current-tag current-tags groups)))
 		     (when exit-after-next (setq exit-after-next 'now)))
                     ;; INPUT-CHAR is for a todo keyword.
 		    ((let (and todo-keyword (guard todo-keyword))
@@ -12143,16 +12182,7 @@ Returns the new tags string, or nil to not change the current settings."
                     ;; INPUT-CHAR is for a tag.
 		    ((let (and tag (guard tag))
                        (car (rassoc input-char tag-table-local)))
-		     (if (member tag current-tags)
-                         ;; Remove the tag.
-		         (setq current-tags (delete tag current-tags))
-                       ;; Add the tag.  If the tag is from a tag
-                       ;; group, exclude selected alternative tags
-                       ;; from the group, if any.
-		       (dolist (g groups)
-			 (when (member tag g)
-			   (dolist (x g) (setq current-tags (delete x current-tags)))))
-		       (push tag current-tags))
+                     (setq current-tags (org--add-or-remove-tag tag current-tags groups))
 		     (when exit-after-next (setq exit-after-next 'now))))
 		  ;; Create a sorted tag list.
 		  (setq current-tags
@@ -12935,7 +12965,8 @@ However, if LITERAL-NIL is set, return the string value \"nil\" instead."
         (org-element-at-point epom)
         (lambda (el)
           (pcase-let ((`(,val . ,val+)
-                       (org--property-local-values property literal-nil el)))
+                       ;; Force LITERAL-NIL t.
+                       (org--property-local-values property t el)))
             (if (not val)
                 ;; PROPERTY+
                 (prog1 nil ; keep looking for PROPERTY
@@ -12953,7 +12984,7 @@ However, if LITERAL-NIL is set, return the string value \"nil\" instead."
     ;; only PROPERTY+).
     (unless found-inherited?
       (when-let ((global (org--property-global-or-keyword-value
-                          property literal-nil)))
+                          property t)))
         (setq values (cons global values))))
     (when values
       (setq values (mapconcat
@@ -14960,30 +14991,42 @@ When SUPPRESS-TMP-DELAY is non-nil, suppress delays like
       (when (string-match "^.\\{10\\}.*?[0-9]+:[0-9][0-9]" ts)
 	(setq with-hm t))
       (setq time0 (org-parse-time-string ts))
-      (when (and updown
-		 (eq timestamp? 'minute)
-		 (not current-prefix-arg))
-	;; This looks like s-up and s-down.  Change by one rounding step.
-	(setq n (* dm (cond ((> n 0) 1) ((< n 0) -1) (t 0))))
-	(unless (= 0 (setq rem (% (nth 1 time0) dm)))
-	  (setcar (cdr time0) (+ (nth 1 time0)
-				 (if (> n 0) (- rem) (- dm rem))))))
-      (setq time
-	    (org-encode-time
-             (apply #'list
-                    (or (car time0) 0)
-                    (+ (if (eq timestamp? 'minute) n 0) (nth 1 time0))
-                    (+ (if (eq timestamp? 'hour) n 0)   (nth 2 time0))
-                    (+ (if (eq timestamp? 'day) n 0)    (nth 3 time0))
-                    (+ (if (eq timestamp? 'month) n 0)  (nth 4 time0))
-                    (+ (if (eq timestamp? 'year) n 0)   (nth 5 time0))
-                    (nthcdr 6 time0))))
+      (let ((increment n))
+        (if (and updown
+	         (eq timestamp? 'minute)
+	         (not current-prefix-arg))
+	    ;; This looks like s-up and s-down.  Change by one rounding step.
+            (progn
+	      (setq increment (* dm (cond ((> n 0) 1) ((< n 0) -1) (t 0))))
+	      (unless (= 0 (setq rem (% (nth 1 time0) dm)))
+	        (setcar (cdr time0) (+ (nth 1 time0)
+				       (if (> n 0) (- rem) (- dm rem))))))
+          ;; Do not round anything in `org-modify-ts-extra' when prefix
+          ;; argument is supplied - just use whatever is provided by the
+          ;; prefix argument.
+          (setq dm 1))
+        (setq time
+	      (org-encode-time
+               (apply #'list
+                      (or (car time0) 0)
+                      (+ (if (eq timestamp? 'minute) increment 0) (nth 1 time0))
+                      (+ (if (eq timestamp? 'hour) increment 0)   (nth 2 time0))
+                      (+ (if (eq timestamp? 'day) increment 0)    (nth 3 time0))
+                      (+ (if (eq timestamp? 'month) increment 0)  (nth 4 time0))
+                      (+ (if (eq timestamp? 'year) increment 0)   (nth 5 time0))
+                      (nthcdr 6 time0)))))
       (when (and (memq timestamp? '(hour minute))
 		 extra
 		 (string-match "-\\([012][0-9]\\):\\([0-5][0-9]\\)" extra))
+        ;; When modifying the start time in HH:MM-HH:MM range, update
+        ;; end time as well.
 	(setq extra (org-modify-ts-extra
-		     extra
-		     (if (eq timestamp? 'hour) 2 5)
+		     extra ;; -HH:MM ...
+                     ;; Fake position in EXTRA to force changing hours
+                     ;; or minutes as needed.
+		     (if (eq timestamp? 'hour)
+                         2 ;; -H<H>:MM
+                       5) ;; -HH:M<M>
 		     n dm)))
       (when (integerp timestamp?)
 	(setq extra (org-modify-ts-extra extra timestamp? n dm)))
@@ -15063,42 +15106,61 @@ When SUPPRESS-TMP-DELAY is non-nil, suppress delays like
 		 (memq timestamp? '(day month year)))
 	(org-recenter-calendar (time-to-days time))))))
 
-(defun org-modify-ts-extra (s pos n dm)
-  "Change the different parts of the lead-time and repeat fields in timestamp."
-  (let ((idx '(("d" . 0) ("w" . 1) ("m" . 2) ("y" . 3) ("d" . -1) ("y" . 4)))
-	ng h m new rem)
-    (when (string-match "\\(-\\([012][0-9]\\):\\([0-5][0-9]\\)\\)?\\( +\\+\\([0-9]+\\)\\([dmwy]\\)\\)?\\( +-\\([0-9]+\\)\\([dmwy]\\)\\)?" s)
+(defun org-modify-ts-extra (ts-string pos nincrements increment-step)
+  "Change the lead-time/repeat fields at POS in timestamp string TS-STRING.
+POS is the position in the timestamp string to be changed.
+NINCREMENTS is the number of incremenets/decrements.
+
+INCREMENT-STEP is step used for a single increment when POS in on
+minutes.  Before incrementing minutes, they are rounded to
+INCREMENT-STEP divisor."
+  (let (;; increment order for dwmy: d-1=d; d+1=w; w+1=m; m+1=y; y+1=y.
+        (idx '(("d" . 0) ("w" . 1) ("m" . 2) ("y" . 3) ("d" . -1) ("y" . 4)))
+	pos-match-group hour minute new rem)
+    (when (string-match "\\(-\\([012][0-9]\\):\\([0-5][0-9]\\)\\)?\\( +\\+\\([0-9]+\\)\\([dmwy]\\)\\)?\\( +-\\([0-9]+\\)\\([dmwy]\\)\\)?" ts-string)
       (cond
-       ((or (org-pos-in-match-range pos 2)
-	    (org-pos-in-match-range pos 3))
-	(setq m (string-to-number (match-string 3 s))
-	      h (string-to-number (match-string 2 s)))
-	(if (org-pos-in-match-range pos 2)
-	    (setq h (+ h n))
-	  (setq n (* dm (with-no-warnings (cl-signum n))))
-	  (unless (= 0 (setq rem (% m dm)))
-	    (setq m (+ m (if (> n 0) (- rem) (- dm rem)))))
-	  (setq m (+ m n)))
-	(when (< m 0) (setq m (+ m 60) h (1- h)))
-	(when (> m 59) (setq m (- m 60) h (1+ h)))
-	(setq h (mod h 24))
-	(setq ng 1 new (format "-%02d:%02d" h m)))
-       ((org-pos-in-match-range pos 6)
-	(setq ng 6 new (car (rassoc (+ n (cdr (assoc (match-string 6 s) idx))) idx))))
-       ((org-pos-in-match-range pos 5)
-	(setq ng 5 new (format "%d" (max 1 (+ n (string-to-number (match-string 5 s)))))))
+       ((or (org-pos-in-match-range pos 2) ;; POS in end hours
+	    (org-pos-in-match-range pos 3)) ;; POS in end minutes
+	(setq minute (string-to-number (match-string 3 ts-string))
+	      hour (string-to-number (match-string 2 ts-string)))
+	(if (org-pos-in-match-range pos 2) ;; POS in end hours
+            ;; INCREMENT-STEP is only applicable to MINUTE.
+	    (setq hour (+ hour nincrements))
+	  (setq nincrements (* increment-step nincrements))
+	  (unless (= 0 (setq rem (% minute increment-step)))
+            ;; Round the MINUTE to INCREMENT-STEP.
+	    (setq minute (+ minute (if (> nincrements 0) (- rem) (- increment-step rem)))))
+	  (setq minute (+ minute nincrements)))
+	(when (< minute 0) (setq minute (+ minute 60) hour (1- hour)))
+	(when (> minute 59) (setq minute (- minute 60) hour (1+ hour)))
+	(setq hour (mod hour 24))
+	(setq pos-match-group 1
+              new (format "-%02d:%02d" hour minute)))
+       
+       ((org-pos-in-match-range pos 6) ;; POS on "dmwy" repeater char.
+	(setq pos-match-group 6
+              new (car (rassoc (+ nincrements (cdr (assoc (match-string 6 ts-string) idx))) idx))))
+       
+       ((org-pos-in-match-range pos 5) ;; POS on X in "Xd" repeater.
+	(setq pos-match-group 5
+              ;; Never drop below X=1.
+              new (format "%d" (max 1 (+ nincrements (string-to-number (match-string 5 ts-string)))))))
+       
+       ((org-pos-in-match-range pos 9) ;; POS on "dmwy" repeater in warning interval.
+	(setq pos-match-group 9
+              new (car (rassoc (+ nincrements (cdr (assoc (match-string 9 ts-string) idx))) idx))))
+       
+       ((org-pos-in-match-range pos 8) ;; POS on X in "Xd" in warning interval.
+	(setq pos-match-group 8
+              ;; Never drop below X=0.
+              new (format "%d" (max 0 (+ nincrements (string-to-number (match-string 8 ts-string))))))))
 
-       ((org-pos-in-match-range pos 9)
-	(setq ng 9 new (car (rassoc (+ n (cdr (assoc (match-string 9 s) idx))) idx))))
-       ((org-pos-in-match-range pos 8)
-	(setq ng 8 new (format "%d" (max 0 (+ n (string-to-number (match-string 8 s))))))))
-
-      (when ng
-	(setq s (concat
-		 (substring s 0 (match-beginning ng))
-		 new
-		 (substring s (match-end ng))))))
-    s))
+      (when pos-match-group
+	(setq ts-string (concat
+		         (substring ts-string 0 (match-beginning pos-match-group))
+		         new
+		         (substring ts-string (match-end pos-match-group))))))
+    ts-string))
 
 (defun org-recenter-calendar (d)
   "If the calendar is visible, recenter it to date D."
@@ -15542,6 +15604,10 @@ in Org mode.
 \\{org-cdlatex-mode-map}"
   :lighter " OCDL"
   (when org-cdlatex-mode
+    ;; Try to load texmathp before cdlatex.  Otherwise, cdlatex can
+    ;; bind `cdlatex--texmathp' to `ignore', not using `texmathp' at
+    ;; all.
+    (org-require-package 'texmathp "Auctex")
     (org-require-package 'cdlatex)
     (run-hooks 'cdlatex-mode-hook)
     (cdlatex-compute-tables))
@@ -19176,9 +19242,7 @@ ELEMENT."
 	     (goto-char start)
 	     (current-indentation)))
 	  ;; In any other case, indent like the current line.
-	  (t (current-indentation)))))
-      ;; Finally, no indentation is needed, fall back to 0.
-      (t (current-indentation))))))
+	  (t (current-indentation)))))))))
 
 (defun org--align-node-property ()
   "Align node property at point.
@@ -20072,12 +20136,10 @@ strictly within a source block, use appropriate comment syntax."
 (defun org-comment-dwim (_arg)
   "Call the comment command you mean.
 Call `org-toggle-comment' if on a heading, otherwise call
-`comment-dwim', within a source edit buffer if needed."
+`comment-dwim'."
   (interactive "*P")
   (cond ((org-at-heading-p)
 	 (call-interactively #'org-toggle-comment))
-	((org-in-src-block-p)
-	 (org-babel-do-in-edit-buffer (call-interactively #'comment-dwim)))
 	(t (call-interactively #'comment-dwim))))
 
 
@@ -20278,7 +20340,7 @@ With argument N not nil or 1, move forward N - 1 lines first."
 	(if (eq special 'reversed)
 	    (when (and (= origin bol) (eq last-command this-command))
 	      (goto-char refpos))
-	  (when (or (> origin refpos) (= origin bol))
+	  (when (or (> origin refpos) (<= origin bol))
 	    (goto-char refpos)))))
      ((and (looking-at org-list-full-item-re)
 	   (org-element-type-p
@@ -20294,7 +20356,7 @@ With argument N not nil or 1, move forward N - 1 lines first."
 	(if (eq special 'reversed)
 	    (when (and (= (point) origin) (eq last-command this-command))
 	      (goto-char after-bullet))
-	  (when (or (> origin after-bullet) (= (point) origin))
+	  (when (or (> origin after-bullet) (>= (point) origin))
 	    (goto-char after-bullet)))))
      ;; No special context.  Point is already at beginning of line.
      (t nil))))
@@ -20349,7 +20411,7 @@ With argument N not nil or 1, move forward N - 1 lines first."
 		   (goto-char tags)
 		 (end-of-line)))
 	      (t
-	       (if (or (< origin tags) (= origin (line-end-position)))
+	       (if (or (< origin tags) (>= origin (line-end-position)))
 		   (goto-char tags)
 		 (end-of-line))))))
      ((bound-and-true-p visual-line-mode)

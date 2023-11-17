@@ -872,7 +872,28 @@ Some other text
   (should-not
    (org-test-with-temp-text "- item\n  #+name: name\nSome paragraph"
      (progn (search-forward "Some")
-	    (org-element-property :name (org-element-at-point))))))
+	    (org-element-property :name (org-element-at-point)))))
+  ;; Corner case: orphaned keyword before comment.
+  ;; Comments cannot have affiliated keywords.
+  (should-not
+   (org-test-with-temp-text "#+name: foo\n# bar"
+     (progn (search-forward "bar")
+	    (org-element-property :name (org-element-at-point)))))
+  ;; Headlines cannot have affiliated keywords.
+  (should
+   (org-test-with-temp-text "<point>#+name: foo\n* Heading"
+     (org-element-type-p (org-element-at-point) 'keyword)))
+  ;; Clocks cannot have affiliated keywords.
+  (should
+   (org-test-with-temp-text "<point>#+name: foo
+CLOCK: [2023-10-13 Fri 14:40]--[2023-10-13 Fri 14:51] =>  0:11"
+     (org-element-type-p (org-element-at-point) 'keyword)))
+  ;; Inlinetasks cannot have affiliated keywords.
+  (should
+   (let ((org-inlinetask-min-level 4))
+     (org-test-with-temp-text "<point>#+name: foo
+**** Inlinetask"
+       (org-element-type-p (org-element-at-point) 'keyword)))))
 
 
 ;;;; Babel Call
@@ -1282,7 +1303,11 @@ Some other text
   ;; Handle non-empty blank line at the end of buffer.
   (should
    (org-test-with-temp-text "#+BEGIN: myblock :param val1\nC\n#+END:\n  "
-     (= (org-element-property :end (org-element-at-point)) (point-max)))))
+     (= (org-element-property :end (org-element-at-point)) (point-max))))
+  ;; Block name is mandatory.
+  (should-not
+   (org-test-with-temp-text "#+BEGIN:\n\n#+END:\n"
+     (org-element-type-p (org-element-at-point) 'dynamic-block))))
 
 
 ;;;; Entity
@@ -1293,6 +1318,21 @@ Some other text
   (should
    (org-test-with-temp-text "\\sin"
      (org-element-map (org-element-parse-buffer) 'entity 'identity)))
+  ;; Special case: space-based entities.
+  (should
+   (equal
+    "_   "
+    ;; Space after entity must be a part of its name.
+    (org-test-with-temp-text "\\_   Foo"
+      (org-element-property
+       :name
+       (car (org-element-map (org-element-parse-buffer) 'entity 'identity))))))
+  (should-not
+   ;; {} is not a part of whitespace entity name.
+   (org-test-with-temp-text "\\_   {}Foo"
+     (org-element-property
+      :bracketsp
+      (car (org-element-map (org-element-parse-buffer) 'entity 'identity)))))
   ;; With brackets.
   (should
    (org-element-property
@@ -2746,7 +2786,7 @@ Outside list"
    (eq 'property-drawer
        (org-test-with-temp-text "# C\n# C\n<point>:PROPERTIES:\n:prop: value\n:END:"
 	 (org-element-type (org-element-at-point)))))
-  (should-not
+  (should
    (eq 'property-drawer
        (org-test-with-temp-text "\n<point>:PROPERTIES:\n:prop: value\n:END:"
 	 (org-element-type (org-element-at-point)))))
@@ -3215,7 +3255,13 @@ Outside list"
      (org-test-with-temp-text "_first line\nsecond line_"
        (org-element-map
 	   (org-element-parse-buffer) 'underline #'identity nil t)))
-    '("first line\nsecond line"))))
+    '("first line\nsecond line")))
+  ;; Nested underlines.
+  (should
+   (= 2
+      (org-test-with-temp-text "__test__"
+	(length
+	 (org-element-map (org-element-parse-buffer) 'underline 'identity))))))
 
 
 ;;;; Verbatim
@@ -3261,6 +3307,38 @@ Outside list"
    (org-test-with-temp-text "#+BEGIN_VERSE\nC\n#+END_VERSE\n "
      (= (org-element-property :end (org-element-at-point)) (point-max)))))
 
+;;; Org data.
+
+(ert-deftest test-org-element/org-data-parser ()
+  "Test `org-data' parser."
+  ;; Standard test.
+  (org-test-with-temp-text "This is test."
+    (let ((data (org-element-lineage (org-element-at-point) 'org-data)))
+      (should (equal 1 (org-element-begin data)))
+      (should (equal (point-max) (org-element-end data)))))
+  ;; Parse top-level property drawer.
+  (should
+   (equal
+    "bar"
+    (org-test-with-temp-text ":PROPERTIES:
+:FOO: bar
+:END:"
+      (org-element-property-inherited :FOO (org-element-at-point)))))
+  ;; With leading comment line.
+  (org-test-with-temp-text "# comment
+:PROPERTIES:
+:FOO: bar
+:END:"
+    (should (equal "bar" (org-element-property-inherited :FOO (org-element-at-point)))))
+  ;; Blank line on top.
+  (should
+   (equal
+    "bar"
+    (org-test-with-temp-text "
+:PROPERTIES:
+:FOO: bar<point>
+:END:"
+      (org-element-property-inherited :FOO (org-element-at-point))))))
 
 
 ;;; Test Interpreters.
@@ -5035,7 +5113,7 @@ Text
 line"
       (org-element-cache-map #'ignore :granularity 'element)
       (should (eq 'keyword (org-element-type (org-element-at-point))))
-      (insert "#")
+      (insert "1")
       (should (eq 2 (org-element-property :begin (org-element-at-point)))))))
 
 (ert-deftest test-org-element/cache-table ()
@@ -5224,6 +5302,31 @@ a
         (org-element-property
          :title
          (org-element-lineage (org-element-at-point) '(headline))))))))
+
+(ert-deftest test-org-element/cache-ignored-locals ()
+  "Test `org-element-ignored-local-variables' value.
+Anything holding element cache state must not be copied around
+buffers, as in `org-element-copy-buffer' or
+`org-export-copy-buffer'.  Otherwise, we may encounter
+hard-to-debug errors when cache state is either not up-to-date or
+modified by side effect, influencing the original values."
+  (mapatoms
+   (lambda (var)
+     (when (and (boundp var)
+                (symbol-value var)
+                (string-match-p "^org-element--cache" (symbol-name var))
+                (not (memq var '(org-element--cache-interrupt-C-g-max-count
+                               org-element--cache-map-statistics-threshold
+                               org-element--cache-variables
+                               org-element--cache-interrupt-C-g-count
+                               org-element--cache-interrupt-C-g
+                               org-element--cache-element-properties
+                               org-element--cache-sensitive-re
+                               org-element--cache-hash-size
+                               org-element--cache-non-modifying-commands
+                               org-element--cache-self-verify-frequency
+                               org-element--cache-diagnostics-level))))
+       (should (memq var org-element-ignored-local-variables))))))
 
 (provide 'test-org-element)
 
