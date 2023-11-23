@@ -459,6 +459,15 @@ https://orgmode.org/worg/code/scripts/x11idle.c"
   :package-version '(Org . "9.7")
   :type 'string)
 
+(defcustom org-clock-pgtkidle-program-name
+  (if (executable-find "jc-idle-time")
+      "jc-idle-time")
+  "Name of the program which prints idle time in milliseconds.
+Case of a pgtk Emacs instance."
+  :group 'org-clock
+  :package-version '(Org . "9.7")
+  :type 'string)
+
 (defcustom org-clock-goto-before-context 2
   "Number of lines of context to display before currently clocked-in entry.
 This applies when using `org-clock-goto'."
@@ -1216,6 +1225,17 @@ If `only-dangling-p' is non-nil, only ask to resolve dangling
   "Return the current Mac idle time in seconds."
   (string-to-number (shell-command-to-string "ioreg -c IOHIDSystem | perl -ane 'if (/Idle/) {$idle=(pop @F)/1000000000; print $idle; last}'")))
 
+(defvar org-pgtkidle-exists-p
+  ;; Check that org-clock-pgtkidle-program-name exists.  But don't do that on DOS/Windows,
+  ;; since the command definitely does NOT exist there, and invoking
+  ;; COMMAND.COM on MS-Windows is a bad idea -- it hangs.
+  (and (null (memq system-type '(windows-nt ms-dos)))
+       (eq 0 (call-process-shell-command
+              (format "command -v %s" org-clock-pgtkidle-program-name)))
+       ;; Check that x11idle can retrieve the idle time
+       ;; FIXME: Why "..-shell-command" rather than just `call-process'?
+       (eq 0 (call-process-shell-command org-clock-pgtkidle-program-name))))
+
 (defvar org-x11idle-exists-p
   ;; Check that x11idle exists.  But don't do that on DOS/Windows,
   ;; since the command definitely does NOT exist there, and invoking
@@ -1230,6 +1250,11 @@ If `only-dangling-p' is non-nil, only ask to resolve dangling
 (defun org-x11-idle-seconds ()
   "Return the current X11 idle time in seconds."
   (/ (string-to-number (shell-command-to-string org-clock-x11idle-program-name)) 1000))
+
+(defun org-pgtk-idle-seconds ()
+  "Return the current X11 idle time in seconds."
+  (/ (string-to-number (shell-command-to-string org-clock-pgtkidle-program-name))1000))
+
 
 (defvar org-logind-dbus-session-path
   (when (and (boundp 'dbus-runtime-version)
@@ -1260,6 +1285,8 @@ This routine returns a floating point number."
     (org-mac-idle-seconds))
    ((and (eq window-system 'x) org-x11idle-exists-p)
     (org-x11-idle-seconds))
+   ((and (eq window-system 'pgtk) org-pgtkidle-exists-p)
+    (org-pgtk-idle-seconds))
    ((and
      org-logind-dbus-session-path
      (dbus-get-property
